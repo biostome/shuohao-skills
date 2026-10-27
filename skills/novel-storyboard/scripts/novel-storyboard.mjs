@@ -1071,6 +1071,8 @@ const I18N = {
     compLine: (c) => [c.lens, c.cameraPosition, c.composition, c.eyeline && `视线 ${c.eyeline}`, c.focus && `焦点 ${c.focus}`, STABILITY[c.stability] ?? c.stability].filter(Boolean).join(' · '),
     showSegs: '▾ 展开全部段',
     hideSegs: '▴ 收起',
+    allEps: '全部',
+    epJumpHint: '只看这一集',
     copy: '复制', copied: '已复制', copyFailed: '复制失败',
     dialogueCols: ['段 · 切', '说话人', '台词', '台词秒数'],
     cutCols: ['切', '起点', '秒', '景别', '运镜', '配方', '画面', '人物'],
@@ -1136,6 +1138,8 @@ const I18N = {
     compLine: (c) => [c.lens, c.cameraPosition, c.composition, c.eyeline && `eyeline ${c.eyeline}`, c.focus && `focus ${c.focus}`, ({ stable: 'stable', 'slight-shake': 'slight shake', handheld: 'handheld' })[c.stability] ?? c.stability].filter(Boolean).join(' · '),
     showSegs: '▾ Show all segments',
     hideSegs: '▴ Collapse',
+    allEps: 'All',
+    epJumpHint: 'Show this episode only',
     copy: 'Copy', copied: 'Copied', copyFailed: 'Copy failed',
     dialogueCols: ['Segment · cut', 'Speaker', 'Line', 'Seconds'],
     cutCols: ['Cut', 'Start', 'Sec', 'Size', 'Camera', 'Recipe', 'Picture', 'Characters'],
@@ -1353,7 +1357,7 @@ export function renderHtml(board, ctx = {}) {
           return `<span class="rseg" style="width:${r1(gw)}%">${segs}</span>`;
         })
         .join('');
-      return `<div class="rrow"><span class="rep">E${String(ep.ep).padStart(2, '0')}</span><div class="rtrack">${groups}</div><span class="rval">${esc(t.rhythmVal(st.segments, st.cuts, st.totalSeconds))}</span></div>`;
+      return `<div class="rrow"><button class="rep" data-ep="${ep.ep}" title="${esc(t.epJumpHint)}">E${String(ep.ep).padStart(2, '0')}</button><div class="rtrack">${groups}</div><span class="rval">${esc(t.rhythmVal(st.segments, st.cuts, st.totalSeconds))}</span></div>`;
     })
     .join('\n');
   const rhythmLegend = Object.keys(SHOT_SIZES)
@@ -1453,7 +1457,7 @@ ${cutRows}
 </article>`;
         })
         .join('\n');
-      return `<section class="ep" id="ep-${ep.ep}">
+      return `<section class="ep" id="ep-${ep.ep}" data-ep="${ep.ep}">
   <header class="ep-h">
     <span class="ep-n">E${String(ep.ep).padStart(2, '0')}</span>
     <span class="ep-est">${esc(t.epHead(st.segments, st.cuts, st.totalSeconds, st.target))}</span>
@@ -1468,12 +1472,21 @@ ${cards}
     })
     .join('\n');
 
+  // ---- 集页签：多集时 02 区收成页签，默认全部平铺；≤1 集不出页签，与改动前逐字节一致 ----
+  const epTabBar = eps.length > 1
+    ? `<div class="eptabs" role="tablist"><button class="eptab on" data-ep="all">${esc(t.allEps)}</button>${eps
+        .map((ep) => `<button class="eptab" data-ep="${ep.ep}">E${String(ep.ep).padStart(2, '0')}</button>`)
+        .join('')}</div>`
+    : '';
+
   // ---- 03 生成批次单 ----
+  // data-ep：批次卡跟随集页签过滤；集号从段号前缀推出（同批次同场景同光照，段号必然同集）
   const batchCards = stats.batches
     .map((b, i) => {
       const sheet = ctx.image ? ctx.image('sheet', `${slug(n.scene(b.sceneId))}-sheet.png`) : null;
       const hasSheet = sheet != null;
-      return `<article class="batch">
+      const epn = (/^E(\d+)-/.exec(b.segments[0] ?? '') ?? [])[1] ?? '';
+      return `<article class="batch" data-ep="${epn}">
   ${hasSheet ? `<img class="bimg" src="${esc(sheet)}" alt="${esc(n.scene(b.sceneId))}" loading="lazy">` : ''}
   <header class="batch-h"><b>${esc(t.batchLabel(String(i + 1).padStart(2, '0')))}</b><span class="chip">${esc(`${b.sceneId} ${n.scene(b.sceneId)}`)}</span>${b.lighting ? `<span class="chip lite">${esc(b.lighting)}</span>` : ''}</header>
   <div class="batch-shots">${b.segments.map((s) => `<a class="chip mono" href="#seg-${esc(s)}">${esc(s)}</a>`).join('')}</div>
@@ -1484,7 +1497,7 @@ ${cards}
 
   // ---- 04 配音对齐单 ----
   const dlgRows = stats.dialogue
-    .map((d) => `<tr><td><a href="#seg-${esc(d.segment)}">${esc(d.segment)}</a> #${d.cut}</td><td>${esc(n.char(d.speaker))}</td><td class="serif">${esc(d.line)}</td><td>${d.seconds}</td></tr>`)
+    .map((d) => `<tr data-ep="${d.ep}"><td><a href="#seg-${esc(d.segment)}">${esc(d.segment)}</a> #${d.cut}</td><td>${esc(n.char(d.speaker))}</td><td class="serif">${esc(d.line)}</td><td>${d.seconds}</td></tr>`)
     .join('\n');
 
   const gateList = `<ul class="gate">
@@ -1550,7 +1563,17 @@ section.top-sec{margin-top:34px}
 /* 01 cut rhythm strip */
 .rhythm{background:var(--panel);border:1px solid var(--rule);border-radius:2px;padding:16px 20px 10px}
 .rrow{display:grid;grid-template-columns:44px minmax(0,1fr) 150px;gap:12px;align-items:center;padding:5px 0}
-.rep{font:500 12px/1 var(--mono);color:var(--ink-2)}
+.rep{font:500 12px/1 var(--mono);color:var(--ink-2);appearance:none;background:none;border:0;padding:0;text-align:left;cursor:pointer;transition:.15s}
+.rep:hover{color:var(--seal)}
+.rep:focus-visible{outline:2px solid var(--seal);outline-offset:2px}
+/* 集页签：多集时 02 区一次只铺一集（或全部） */
+.eptabs{display:flex;gap:4px;flex-wrap:wrap;margin:0 0 14px}
+.eptab{font:500 12px/1 var(--mono);letter-spacing:.04em;color:var(--ink-2);background:var(--paper);
+  border:1px solid var(--rule-2);border-radius:2px;padding:6px 12px;cursor:pointer;transition:.15s}
+.eptab:hover{border-color:var(--seal);color:var(--seal)}
+.eptab.on{color:var(--seal);border-color:var(--seal);background:var(--seal-soft)}
+.eptab:focus-visible{outline:2px solid var(--seal);outline-offset:2px}
+.ep.ep-off{display:none}
 .rtrack{display:flex;height:22px;border:1px solid var(--rule);border-radius:2px;overflow:hidden;background:var(--paper)}
 .rseg{display:flex;border-right:2px solid var(--ink-2)}
 .rseg:last-child{border-right:0}
@@ -1648,6 +1671,9 @@ a.chip:hover{border-color:var(--seal);color:var(--seal)}
 .batches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
 @media(max-width:1100px){.batches{grid-template-columns:minmax(0,1fr)}}
 .batch{background:var(--panel);border:1px solid var(--rule);border-radius:2px;padding:14px 18px}
+/* episode-tab filter: 03 batch cards and 04 dialogue rows follow the tab; */
+/* anchor clicks into a hidden episode are resolved by the JS below */
+.batch.ep-off,table tr.ep-off{display:none}
 .bimg{width:100%;aspect-ratio:16/9;object-fit:cover;border:1px solid var(--rule-2);border-radius:2px;
   cursor:zoom-in;display:block;margin-bottom:10px}
 .batch-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
@@ -1692,7 +1718,9 @@ td.serif{font-family:var(--serif)}
 .foot{margin-top:40px;font-size:11px;color:var(--ink-3);border-top:1px solid var(--rule);padding-top:14px}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media print{
-  .expo,.copy,.shmore{display:none!important}
+  .expo,.copy,.shmore,.eptabs{display:none!important}
+  .ep.ep-off,.batch.ep-off{display:block!important}
+  table tr.ep-off{display:table-row!important}
   .pp{max-height:none;overflow:visible}
   .duo{grid-template-columns:minmax(0,1fr)}
   .shots.clip{max-height:none}
@@ -1733,6 +1761,7 @@ ${rhythmRows}
 
 <section class="top-sec" id="sec-segments">
   <div class="sec-h"><span class="no">02</span><h2>${esc(t.secSegments)}</h2><span class="note">${esc(t.segmentsNote)}</span></div>
+${epTabBar}
 ${epBlocks}
 </section>
 
@@ -1779,6 +1808,40 @@ document.querySelectorAll('.shmore').forEach((btn) => {
     btn.textContent = clipped ? L.show : L.hide;
     if (clipped) zone.closest('.ep').scrollIntoView({ block: 'nearest' });
   });
+});
+
+// 集页签：单集 / 全部切换；节奏带左侧的集号可点，点了直接落到该集
+const epTabBtns = document.querySelectorAll('.eptab');
+const epSecs = document.querySelectorAll('.ep');
+if (epTabBtns.length) {
+  const showEp = (v) => {
+    epTabBtns.forEach((b) => b.classList.toggle('on', b.dataset.ep === v));
+    // 用 data-ep 匹配而不是 id：合成报告会给 id 加面板前缀（ep-1 → storyboard--ep-1）
+    epSecs.forEach((sec) => sec.classList.toggle('ep-off', v !== 'all' && sec.dataset.ep !== v));
+    // 03 batches / 04 dialogue follow the tab: only the selected episode's cards and lines
+    document.querySelectorAll('.batch[data-ep]').forEach((card) => card.classList.toggle('ep-off', v !== 'all' && card.dataset.ep !== v));
+    document.querySelectorAll('tr[data-ep]').forEach((tr) => tr.classList.toggle('ep-off', v !== 'all' && tr.dataset.ep !== v));
+  };
+  epTabBtns.forEach((b) => b.addEventListener('click', () => showEp(b.dataset.ep)));
+  document.querySelectorAll('.rrow .rep').forEach((b) => {
+    b.addEventListener('click', () => {
+      showEp(b.dataset.ep);
+      document.getElementById('sec-segments')?.scrollIntoView({ behavior: 'smooth' });
+    });
+  });
+}
+
+// 锚点跳转：目标段在被页签隐藏的集里时，先激活该集再让浏览器默认跳转生效
+// （节奏带色块、批次单段号、对齐单段号都是 #seg-… 链接，指向 display:none 的元素时浏览器不动）
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[href^="#seg-"]');
+  if (!a) return;
+  const target = document.getElementById(a.getAttribute('href').slice(1));
+  const epSec = target && target.closest('.ep');
+  if (epSec && epSec.classList.contains('ep-off')) {
+    const btn = [...document.querySelectorAll('.eptab')].find((b) => b.dataset.ep === epSec.dataset.ep);
+    if (btn) btn.click();
+  }
 });
 
 // 点图放大（主分镜图 / 子分镜图 / 批次场景图）
