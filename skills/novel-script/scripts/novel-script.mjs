@@ -944,6 +944,21 @@ ${castBlocks}
 <script>
 const L = ${JSON.stringify({ copied: t.copied, failed: t.copyFailed, show: t.showScenes, hide: t.hideScenes })};
 
+// clipboard: the async API is blocked inside cross-origin iframes (composer panes / previews);
+// fall back to a hidden textarea + execCommand, which still works there
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch {}
+  const ta = document.createElement('textarea');
+  ta.value = t;
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch {}
+  ta.remove();
+  return ok;
+}
+
 // 集页签：单集 / 全部切换；时长仪表左侧的集号可点，点了直接落到该集
 const epTabBtns = document.querySelectorAll('.eptab');
 const epSecs = document.querySelectorAll('.ep');
@@ -991,7 +1006,7 @@ document.addEventListener('click', async (e) => {
   e.preventDefault();
   const label = btn.textContent;
   try {
-    await navigator.clipboard.writeText(btn.dataset.copy);
+    await copyText(btn.dataset.copy);
     btn.textContent = L.copied;
     btn.dataset.done = '1';
   } catch {
