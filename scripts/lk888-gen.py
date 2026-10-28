@@ -11,7 +11,8 @@ lk888 中转站的 /v1/media/generate，轮询 /v1/skills/task-status，把结�
 环境变量：
   LK888_API_KEY      必填，中转站 key（sk-…）
   LK888_BASE_URL     选填，默认 https://api.lk888.ai
-  LK888_IMAGE_MODEL  选填，默认 banana-2.1（纳米香蕉 2.1 按次，约 ¥0.087/张）
+  LK888_IMAGE_MODEL  选填，默认 tt-image-2.5（约 ¥0.026/张，全场最低按次价）；
+                     可设 banana-2.1（约 ¥0.087，参考图融合更强）等
   LK888_TIMEOUT      选填，轮询超时秒数，默认 600
 
 退出码：0 成功；2 参数/环境错误；3 提交或任务失败。{out} 不存在即失败。
@@ -84,19 +85,37 @@ def data_uri(path: Path) -> str:
     return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}"
 
 
-def pick_ratio(width: int, height: int) -> str:
+def pick_ratio(width: int, height: int, *, fallback: str) -> str:
     g = math.gcd(width, height)
     key = (width // g, height // g)
     if key in KNOWN_RATIOS:
         return KNOWN_RATIOS[key]
-    # 就近归到常用比例，避免渠道拒单
-    target = width / height
-    best = min(KNOWN_RATIOS, key=lambda k: abs(k[0] / k[1] - target))
-    return KNOWN_RATIOS[best]
+    return fallback
 
 
-def pick_size(width: int, height: int) -> str:
-    return "2K" if max(width, height) >= 2048 else "1K"
+def build_image_params(model: str, width: int, height: int, ref_uris: list[str]) -> dict:
+    """不同中转模型参数名不同：tt-image 系用 snake_case + 必填 version；banana 系用驼峰。"""
+    if model.startswith("tt-image"):
+        params: dict = {
+            "version": "flare",          # 标准版（增强版 sunburst 更贵）
+            "aspect_ratio": pick_ratio(width, height, fallback="auto"),
+            "resolution": "2K" if max(width, height) >= 2048 else "1K",
+        }
+    else:  # banana 系（banana-2 / 2.1 / pro）
+        g = math.gcd(width, height)
+        key = (width // g, height // g)
+        if key in KNOWN_RATIOS:
+            ratio = KNOWN_RATIOS[key]
+        else:
+            target = width / height
+            ratio = KNOWN_RATIOS[min(KNOWN_RATIOS, key=lambda k: abs(k[0] / k[1] - target))]
+        params = {
+            "aspectRatio": ratio,
+            "imageSize": "2K" if max(width, height) >= 2048 else "1K",
+        }
+    if ref_uris:
+        params["images"] = ref_uris
+    return params
 
 
 def download(url: str, out: Path) -> None:
@@ -151,15 +170,11 @@ def main() -> int:
 
     base = env("LK888_BASE_URL", "https://api.lk888.ai").rstrip("/")
     token = env("LK888_API_KEY", required=True)
-    model = (args.model or env("LK888_IMAGE_MODEL", "banana-2.1")).strip()
+    model = (args.model or env("LK888_IMAGE_MODEL", "tt-image-2.5")).strip()
 
-    params: dict = {
-        "aspectRatio": pick_ratio(width, height),
-        "imageSize": pick_size(width, height),
-    }
     refs = [Path(p) for p in args.ref if p]
-    if refs:
-        params["images"] = [data_uri(p) for p in refs]
+    ref_uris = [data_uri(p) for p in refs]
+    params = build_image_params(model, width, height, ref_uris)
 
     created, status = request_json(
         f"{base}/v1/media/generate",
