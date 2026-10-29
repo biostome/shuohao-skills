@@ -1,6 +1,6 @@
 ---
 name: novel-storyboard
-version: 2.0.0
+version: 2.2.0
 description: |
   给 AI 短剧出分镜：三层结构——段（一次视频生成，≤15 秒）→ 分镜（段内 2–5 秒的剪切，认领剧本节拍）
   → 分镜图（每切一张关键帧：主分镜图钉 0.00 秒，子分镜图钉各自切点）。
@@ -8,7 +8,7 @@ description: |
   [Shot k] 切点时刻由分镜结构推导、逐字对账，台词逐字进 <d> 块（写法规范已内化为
   references/h3-prompt.md，不依赖外部 skill）。
   产出 storyboard.json + Markdown + 单页评审报告（分镜节奏带 / 分集分镜表 / 生成批次单 /
-  配音对齐单，含导出 JSON）。不出图——交付的是每格的画面提示词和它该挂哪些参考图。
+  配音对齐单，含导出 JSON）。脚本不出图——有出图能力时按 Step 5 出分镜图（角色 + 场景双层参考）。
   18 道质量门全部由脚本确定性检查（第 18 道 shot-recipe 可选：挂上 shot-recipes 卡库才查，不挂就明说跳过）；
   export 一键导出 H3 投产包（每段提示词 + 按 Picture 序的分镜图清单）。零依赖、零 API key，用当前会话额度。
   Use when asked to 分镜、出分镜、镜头表、切镜、storyboard for AI short drama。
@@ -114,7 +114,7 @@ node {baseDir}/scripts/novel-storyboard.mjs validate <storyboard.json> \
 
 **第 18 道 `shot-recipe`（可选挂载）**：给了 `--shots` 才查，不给就明说跳过。cut 上可以写一个可选的 `recipe`（配方卡 id，**cut 级不是 segment 级**，**多格配方靠连续同 id 的分镜表达**，不是数组），门查三条——id 在卡库里、卡片的每条 `must_phrases` 出现在该切的 `frame` 里（两边小写化后 `includes`）、卡片 `cuts` 下限 ≥ 2 时连续同 id 的分镜数不得低于该下限。卡片的**建议景别与运镜不设门**，只在报告的「配方」列和 `checkup` 末尾提示偏离：配方是语汇不是法条，可选挂载的东西一旦变严就没人挂。
 
-### Step 4 — 输出与汇报
+### Step 4 — 输出
 
 ```bash
 cd <输出目录>
@@ -128,19 +128,40 @@ node {baseDir}/scripts/novel-storyboard.mjs render <剧名>-storyboard.json --ht
 
 汇报一句话说清：几集几镜、总时长 vs 目标、几个生成批次、报告路径；没过的门明说。
 
+### Step 5 — 出分镜图（环境有出图能力时才做）
+
+每段的每张 `f<切序>.png` 对应一个 cut 的 `frame`，f1 就是该段的主分镜图：
+
+1. **参考图两层一起给**：该切 `characters` 里的角色传 `<角色名>-sheet.png`（要贴脸就用 `<角色名>-avatar.png`），该场对应的场景传 `<场景名>-sheet.png`——只给角色不给场景，空间会漂；只给场景不给角色，人会漂
+2. **画幅跟 `aspectRatio`**（9:16 → 1024×1536，16:9 → 1536×1024），别用默认方图
+3. 提示词取该切的 `frame` 原文，**不要把台词写进去**——图里不出现字幕
+4. 出完 `render ... --frames <目录>` 重嵌报告、`export ... --frames <目录>` 拷进投产包、再重跑一次 `build-panel`
+5. 逐张看：同一段内服装发型不能变、场景锚点（墙上那面镜子、柜台的铁皮边）不能丢
+
+**没真出图就不要说「已出图」**——交付的是提示词和挂图清单，出没出按实际说。
+
+**收尾 —— 生成控制台面板**（各层报告都齐了以后跑一次，项目根就是五份 json 共同的上级目录）：
+
+```bash
+node {baseDir}/scripts/build-panel.mjs <项目根>
+```
+
+扫根目录下的五份 json（`*-outline.json` / `*-cast.json` / `*-art.json` / `*-script.json` / `*-storyboard.json`）与各层的 `*-report.html`，自动统计集数、段、切、秒、批次（口径与批次单一致：同 sceneId + 同光照归一批）和分镜图完成度，生成 `<项目根>/index.html`：左栏切换总览 / 五层报告 / 投产包，报告内嵌 iframe（缺报告就明说），投产包页是逐段逐图的核销清单。缺哪层就如实标「缺」，不阻塞；图补齐、json 改动之后**重跑一次**，进度与配色自动更新。设定资产区里角色优先用 `<名称>-avatar.png`（1:1 头像），没有才回退 `<名称>-sheet.png`——与角色报告左列缩略图同一套约定。`--out` 换输出路径（默认 `index.html`），`--title` 覆盖剧名，`--quiet` 静默。
+
 **不要说「已出图」**——这一步不存在了，交付的是提示词和挂图清单。
 
 最终落地：
 
 ```
 <输出目录>/
+├── index.html                     ← 控制台面板（build-panel 生成，双击就能开）
 ├── <剧名>-storyboard.json
 ├── <剧名>-storyboard.md
 ├── storyboard-report.html         ← 双击就能开
 ├── manifest.json                  ← export 生成
 └── E01-01/                        ← 一段一个文件夹 = 一次 H3 生成的全部材料
-    ├── f1.png                     ← 主分镜图（下游出完放这儿）
-    ├── f2.png …                   ← 子分镜图
+    ├── f1.png                     ← 主分镜图（出完放这儿）
+    ├── f2.png …                   ← 子分镜图（切点帧）
     └── prompt.md                  ← H3 提示词（export 生成）
 ```
 
