@@ -22,7 +22,7 @@
 - `no people` 开头，负向再写一遍 `people, human figures, silhouettes of people, hands`
 - 一致性锚点逐条落成具体的可见物（不是"旧地毯"，而是"化纤蓝地毯，床脚处有个烟头烫的洞"）
 - 光照状态写死（时段的、色温的、方向弱的），不写"自然光"这种含糊词
-- 收尾 `1990s Chinese film photography look, weathered lived-in materials, natural wear`
+- 收尾按 `scene-pass.md` 三档表面处理照抄一句（默认 A 档整洁版 `Modest, well-cared-for materials: ...`），**别手写磨损套话**——90 年代在用的空间是干净整洁的，画面脏破会被打回
 
 `image.sheet` 是**设定图版面**（主视图 + 细节格），比单张 prompt 更适合当资产母版；要出就出 sheet 版，一景一张就够，不必再单出空景。
 
