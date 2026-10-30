@@ -1317,12 +1317,12 @@ function boardAspect(board) {
   return portrait > landscape ? '9:16' : '16:9';
 }
 
-// 竖屏才追加；横屏一个字节都不多，报告与改动前逐字节一致。主图收窄居中——
-// 整卡宽的 9:16 一张就有一屏多高，子分镜条四格竖缩略图照旧铺满
+// 竖屏才追加；横屏一个字节都不多。图位现在是每切右侧一格固定宽窄栏，
+// 竖屏只是把格子的比例从 16:9 换成 9:16，不再需要给主图单独收窄
 const PORTRAIT_FRAME_CSS = `
 /* 竖屏 9:16：分镜图位跟着画幅改竖（场景设定图 .bimg 仍是 16:9） */
-.frame,.subf{aspect-ratio:9/16}
-img.frame{width:min(100%,300px);margin:0 auto}`;
+.frame{aspect-ratio:9/16}
+img.frame{width:100%;margin:0 auto}`;
 
 export function renderHtml(board, ctx = {}) {
   const lang = ctx.lang ?? board?.lang ?? 'zh';
@@ -1374,32 +1374,9 @@ export function renderHtml(board, ctx = {}) {
           const scene = sEp?.scenes?.[seg.sceneIndex - 1];
           const starts = cutStarts(seg.cuts);
           const frame = (ci) => (ctx.image ? ctx.image('frame', `${seg.id}/f${ci + 1}.png`) : null);
-          const has = (ci) => frame(ci) != null;
 
-          // 主分镜图区：图出全的段保留原 master+subs 层级；有缺图的段每切一格——
-          // 有图的格显示原图，无图的格显示整宽提示词卡 + 复制按钮（混合情况按格判断）
-          const hasAll = seg.cuts.every((_, ci) => has(ci));
-          let master, subs;
-          if (hasAll) {
-            master = `<img class="frame" src="${esc(frame(0))}" alt="${esc(`${seg.id}#1`)}" loading="lazy">`;
-            subs = seg.cuts.length > 1
-              ? `<div class="subs">${seg.cuts
-                  .slice(1)
-                  .map((cut, ci) => `<img class="subf" src="${esc(frame(ci + 1))}" alt="${esc(`${seg.id}#${ci + 2}`)}" loading="lazy">`)
-                  .join('')}</div>`
-              : '';
-          } else {
-            master = `<div class="fquad">${seg.cuts
-              .map((cut, ci) => {
-                const label = ci === 0 ? t.masterLabel : t.subLabel(ci + 1);
-                const body = has(ci)
-                  ? `<img class="frame" src="${esc(frame(ci))}" alt="${esc(`${seg.id}#${ci + 1}`)}" loading="lazy">`
-                  : `<div class="frame ph fcell"><div class="fcell-h"><b>${esc(`${label} · ${t.frameMissing(ci + 1)}`)}</b><button class="copy mini" data-copy="${esc(cut.frame ?? '')}">${esc(t.copy)}</button></div><span class="fprompt">${esc(cut.frame ?? '')}</span></div>`;
-                return body;
-              })
-              .join('\n')}</div>`;
-            subs = '';
-          }
+          // 分镜图跟着它自己的那一切走：每行描述右侧一格竖图位，
+          // 有图贴图、没图贴提示词卡——图和它描述的是同一件事，不该分离到段首去
 
           const cutRows = seg.cuts
             .map((cut, ci) => {
@@ -1413,18 +1390,25 @@ export function renderHtml(board, ctx = {}) {
                 .join('');
               // 「配方」列：偏离建议景别／运镜的加 ≠ 上标，建议值写进 title——提示而已，不是门
               const rc = cutRecipe(cut, ctx.recipes, t);
+              const shot = frame(ci);
+              const fig = shot
+                ? `<a href="${esc(shot)}" target="_blank" rel="noopener"><img class="frame" src="${esc(shot)}" alt="${esc(`${seg.id}#${ci + 1}`)}" loading="lazy"></a>`
+                : `<div class="frame ph"><b>${esc(t.frameMissing(ci + 1))}</b><button class="copy mini" data-copy="${esc(cut.frame ?? '')}">${esc(t.copy)}</button></div>`;
               return `<li class="cut">
-  <div class="cut-h">
-    <b>#${ci + 1}</b>
-    <span class="cut-t">${esc(t.atSec(starts[ci]))} · ${cut.seconds}s</span>
-    <span class="cut-sc">${esc(t.sizeName(cut.size))} · ${esc(cut.camera)}</span>
-    ${rc ? `<span class="cut-rc">${esc(rc.name)}${rc.drift ? `<sup title="${esc(rc.drift)}">≠</sup>` : ''}</span>` : ''}
-    ${(cut.characters ?? []).map((id) => `<span class="chip">${esc(n.char(id))}</span>`).join('')}
-    ${(cut.props ?? []).map((id) => `<span class="chip prop">${esc(n.prop(id))}</span>`).join('')}
-    <button class="copy mini" data-copy="${esc(cut.frame ?? '')}">${esc(t.framePrompt)}</button>
+  <div class="cut-b">
+    <div class="cut-h">
+      <b>#${ci + 1}</b>
+      <span class="cut-t">${esc(t.atSec(starts[ci]))} · ${cut.seconds}s</span>
+      <span class="cut-sc">${esc(t.sizeName(cut.size))} · ${esc(cut.camera)}</span>
+      ${rc ? `<span class="cut-rc">${esc(rc.name)}${rc.drift ? `<sup title="${esc(rc.drift)}">≠</sup>` : ''}</span>` : ''}
+      ${(cut.characters ?? []).map((id) => `<span class="chip">${esc(n.char(id))}</span>`).join('')}
+      ${(cut.props ?? []).map((id) => `<span class="chip prop">${esc(n.prop(id))}</span>`).join('')}
+      <button class="copy mini" data-copy="${esc(cut.frame ?? '')}">${esc(t.framePrompt)}</button>
+    </div>
+    ${t.compLine(cut) ? `<p class="scomp">${esc(t.compLine(cut))}</p>` : ''}
+    ${summary}
   </div>
-  ${t.compLine(cut) ? `<p class="scomp">${esc(t.compLine(cut))}</p>` : ''}
-  ${summary}
+  <figure class="cut-fig">${fig}</figure>
 </li>`;
             })
             .join('\n');
@@ -1437,8 +1421,6 @@ export function renderHtml(board, ctx = {}) {
     ${scene?.lighting ? `<span class="chip lite">${esc(scene.lighting)}</span>` : ''}
     <span class="beatsref">${esc(t.beatsLabel(seg.sceneIndex, seg.cuts[0]?.beats?.[0], seg.cuts[seg.cuts.length - 1]?.beats?.[1]))}</span>
   </header>
-  ${master}
-  ${subs}
   ${seg.blocking ? `<p class="seg-block"><b>${esc(t.blockingLabel)}</b>${esc(seg.blocking)}</p>` : ''}
   <div class="duo">
     <ol class="cuts">
@@ -1613,19 +1595,6 @@ section.top-sec{margin-top:34px}
 .frame.ph span{font:400 10.5px/1.55 var(--mono);color:var(--ink-2);overflow:hidden;display:-webkit-box;
   -webkit-line-clamp:5;-webkit-box-orient:vertical}
 .subs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
-.fquad{display:grid;grid-template-columns:1fr;gap:10px;margin:10px 0}
-.fquad .frame.ph{aspect-ratio:auto}
-.fquad .fcell{margin:0;min-height:0}
-.fcell-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}
-.fcell-h .copy.mini{margin:0;flex:none}
-.frame.ph .fprompt{font:400 10.5px/1.4 var(--mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-word;display:block;
-  -webkit-line-clamp:none;-webkit-box-orient:vertical;overflow:visible}
-.subf{width:100%;aspect-ratio:16/9;object-fit:cover;border:1px solid var(--rule-2);border-radius:2px;
-  cursor:zoom-in;display:block;background:var(--side)}
-.subf.ph{display:flex;align-items:center;justify-content:center;cursor:default;
-  font:500 10px/1 var(--sans);color:var(--ink-3);letter-spacing:.08em}
-.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start;border-top:1px solid var(--rule);padding-top:4px}
-@media(max-width:900px){.duo{grid-template-columns:minmax(0,1fr)}}
 .ppanel{border:1px solid var(--rule);border-radius:2px;background:var(--panel);margin-top:7px}
 .pp-h{display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--rule)}
 .pp{display:none;margin:0;padding:9px 12px;font:400 12px/1.8 var(--sans);color:var(--ink);
@@ -1634,8 +1603,17 @@ section.top-sec{margin-top:34px}
 .pp.on{display:block}
 .pp::-webkit-scrollbar{width:6px}
 .pp::-webkit-scrollbar-thumb{background:var(--rule-2);border-radius:3px}
+.duo{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;align-items:start;border-top:1px solid var(--rule);padding-top:4px}
 .cuts{margin:0;padding:0;list-style:none}
-.cut{padding:7px 0;border-bottom:1px solid var(--rule)}
+.cut{display:grid;grid-template-columns:minmax(0,1fr) 132px;gap:12px;align-items:start;
+  padding:9px 0;border-bottom:1px solid var(--rule)}
+.cut-b{min-width:0}
+.cut-fig{margin:0;min-width:0}
+.cut-fig .frame{width:100%}
+.cut-fig .frame.ph{padding:7px 8px;gap:5px;align-items:flex-start;justify-content:space-between}
+.cut-fig .frame.ph b{font-size:9px;letter-spacing:.06em;line-height:1.3}
+.cut-fig .frame.ph .copy{margin:0}
+@media(max-width:760px){.cut{grid-template-columns:minmax(0,1fr) 104px;gap:9px}}
 .cut:first-child{padding-top:11px}
 .cut:last-child{border-bottom:0}
 .cut-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}

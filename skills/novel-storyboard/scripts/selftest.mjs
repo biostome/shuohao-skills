@@ -774,20 +774,20 @@ ok(html.includes(`<p class="seg-block"><b>走位</b>${FIXTURE.episodes[0].segmen
 ok(html.includes('<p class="scomp">35mm 广角，中景深 · 年轻女子 + 背后平视跟随 · 中心构图 · 视线 前方雾中 · 焦点 锁定年轻女子背影与怀中皮箱 · 微晃</p>'), '切行显示构图量化字段');
 ok(html.includes('class="rseg"'), '节奏带按段分组（粗分隔）');
 ok(html.includes('#seg-E01-01'), '节奏带段可跳转');
-ok(html.includes('主分镜图 · #1 未生成'), '主分镜图缺图时显示占位不装有');
-ok(html.includes('#2 未生成'), '子分镜图缺图有小占位');
-// 主分镜图区：无图时每切各占一整行提示词卡 + 复制按钮（PR 核心目标）
+ok(html.includes('<b>#1 未生成</b>'), '缺图的那一格显示占位，不装有');
+// 分镜图位：每一切自带一格，贴在它自己的描述右侧（不再有段首主图 / 子分镜条）
 {
   const nCuts = FIXTURE.episodes.reduce((n, e) => n + e.segments.reduce((m, s) => m + s.cuts.length, 0), 0);
-  ok((html.match(/class="frame ph fcell"/g) ?? []).length === nCuts, '无图时每切都是整宽提示词卡');
+  ok((html.match(/class="cut-fig"/g) ?? []).length === nCuts, '每切一格分镜图位');
+  ok((html.match(/class="frame ph"/g) ?? []).length === nCuts, '无图时每格都是占位卡');
   const c0 = FIXTURE.episodes[0].segments[0].cuts;
-  ok(html.includes(`data-copy="${c0[0].frame}"`), '主分镜格复制按钮带该切 frame 原文');
-  ok(html.includes(`data-copy="${c0[1].frame}"`), '子分镜格复制按钮同样带 frame 原文');
+  ok(html.includes(`data-copy="${c0[0].frame}"`), '第 1 格复制按钮带该切 frame 原文');
+  ok(html.includes(`data-copy="${c0[1].frame}"`), '第 2 格复制按钮同样带 frame 原文');
 }
 ok(html.includes('class="shots clip"'), '段卡区默认截断');
 ok(html.includes('展开全部段'), '每集自带展开按钮');
 ok(html.includes('H3 提示词'), '段卡带 H3 提示词面板');
-ok(html.includes('class="duo"'), '分镜列表与提示词面板五五分栏');
+ok(html.includes('class="duo"'), '分镜列表在上、提示词面板在下');
 ok(html.includes('static shot'), '英文提示词正文进面板');
 ok(html.includes('integrated_multimodal_description'), '官方骨架字段进面板');
 ok(html.includes('[Shot 2] At'), '逐镜换行的结构化正文进面板');
@@ -799,12 +799,9 @@ ok(html.includes('@media print'), '打印样式');
 ok(html.includes('老周'), 'html 里 ID 换成名字');
 {
   const withImg = renderHtml(FIXTURE, { ...CTX, image: (kind, rel) => rel });
-  ok(withImg.includes('"E01-01/f1.png"'), '主分镜图从段文件夹读');
-  ok(withImg.includes('"E01-01/f2.png"'), '子分镜图同样从段文件夹读');
+  ok(withImg.includes('"E01-01/f1.png"'), '第 1 格分镜图从段文件夹读');
+  ok(withImg.includes('"E01-01/f2.png"'), '第 2 格分镜图同样从段文件夹读');
   ok(!withImg.includes('未生成'), '有图时不再显示占位');
-  ok(!withImg.includes('class="frame ph fcell"'), '图出全时不再走整宽提示词卡');
-  ok(withImg.includes('class="subs"'), '图出全时保留子分镜条');
-  ok(withImg.includes('class="subf"'), '子分镜条用小缩略图');
 }
 // 分镜图位跟着正式画幅走；旧 _meta 和 frame 尾缀只保留为兼容路径
 {
@@ -816,8 +813,8 @@ ok(html.includes('老周'), 'html 里 ID 换成名字');
   const port = clone(FIXTURE);
   port.aspectRatio = '9:16';
   const ph = renderHtml(port, { ...CTX, image: (kind, rel) => rel });
-  ok(ph.includes('.frame,.subf{aspect-ratio:9/16}'), 'aspectRatio=9:16：主图与子分镜条图位改 9:16');
-  ok(ph.includes('img.frame{width:min(100%,300px)'), '竖屏主图收窄，不撑成一屏多高');
+  ok(ph.includes('.frame{aspect-ratio:9/16}'), 'aspectRatio=9:16：每格分镜图位改 9:16');
+  ok(ph.includes('img.frame{width:100%'), '竖屏图位铺满格子，不撑出一屏高');
   ok(ph.includes('.bimg{width:100%;aspect-ratio:16/9;'), '场景设定图仍是 16:9，不跟剧的画幅走');
   port._meta = { orientation: 'landscape' };
   ok(renderHtml(port, CTX).includes('aspect-ratio:9/16'), '正式 aspectRatio 比旧 _meta.orientation 优先');
