@@ -30,6 +30,7 @@ import {
   recipeDrift,
   renderHtml,
   renderMarkdown,
+  SEEDANCE_IDENTITY_LOCK,
   SEEDANCE_NO_SUBTITLES,
   SEEDANCE_NO_TWINS,
   seedancePrompt,
@@ -611,14 +612,17 @@ eq(GATE_LOG, '.gates.jsonl', '日志文件名固定');
     const e10 = build('E01-10', { constraints: ['画面比例 16:9', SEEDANCE_NO_SUBTITLES] });
     ok(e10.prompt.endsWith(`【约束】\n1. 画面比例 16:9\n2. ${SEEDANCE_NO_SUBTITLES}`), '调用方约束在前、默认约束不重复、单人段不加禁双胞胎');
   }
-  // 光影：镜级有才出
+  // 光影：镜级有才出；镜级没写就继承场次光照——美术层的设定要一路带到视频提示词
   ok(build('E01-10').prompt.includes('光影：远处一点暖黄灯光熄灭后只剩铜扣的冷光'), '镜级光影有才出');
+  ok(build('E01-06').prompt.includes('光影：晨雾'), '镜级没写光影时继承场次光照');
 
   // 分镜路径：这一段每切都有分镜图 → 只挂分镜图，并在画面行注明构图参考
   {
     const all = build('E01-10', { image: (kind, rel) => (kind === 'frame' ? rel : null) });
     eq(all.refs.map((r) => r.file).join(','), 'E01-10/f1.png,E01-10/f2.png', '分镜路径只挂分镜图');
     ok(all.prompt.includes('（构图参考 @图片1）') && all.prompt.includes('（构图参考 @图片2）'), '每镜注明构图参考哪张');
+    ok(all.prompt.includes(`【约束】\n1. ${SEEDANCE_NO_SUBTITLES}\n2. ${SEEDANCE_IDENTITY_LOCK}`), '挂分镜图参考时追加身份连续性约束');
+    ok(!build('E01-10').prompt.includes(SEEDANCE_IDENTITY_LOCK), '没挂参考图不加身份锁——无从执行的话不稀释约束');
   }
   {
     const part = build('E01-10', { image: (kind, rel) => (rel === 'E01-10/f2.png' ? rel : null) });

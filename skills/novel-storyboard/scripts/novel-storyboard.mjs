@@ -197,6 +197,8 @@ export const SEEDANCE_FORBIDDEN = [
 
 export const SEEDANCE_NO_SUBTITLES = '保持无字幕，避免生成任何文字或字幕';
 export const SEEDANCE_NO_TWINS = '视频全程禁止出现外形、着装、配饰完全一致的人物';
+// 分镜图成为视频参考后，身份连续性靠图钉死——这条约束只在真的挂了参考图时才有意义
+export const SEEDANCE_IDENTITY_LOCK = '同一角色的长相、发型与服装在所有镜头中保持一致，以参考图为准，不得中途变化';
 
 /**
  * 附件两条路：这一段每切都有分镜图 → 分镜路径，只挂分镜图；否则 → 参考图路径，
@@ -251,7 +253,8 @@ export function seedancePrompt(seg, { scene = null, names = {}, image = null, co
     const ref = frameRef.get(ci);
     const shot = String(cut?.shot ?? '').trim();
     if (shot) out.push(`画面：${shot}${ref ? `（构图参考 @图片${ref}）` : ''}`);
-    line('光影', cut?.lighting);
+    // 光影：镜级优先；镜级没写就继承场次光照——美术层的设定必须一路带到视频提示词
+    line('光影', cut?.lighting ?? scene?.lighting);
     const [from, to] = cut?.beats ?? [];
     const spoken = scene && Number.isInteger(from) && Number.isInteger(to)
       ? scene.beats.slice(from - 1, to).filter((b) => b.kind === 'line')
@@ -276,6 +279,8 @@ export function seedancePrompt(seg, { scene = null, names = {}, image = null, co
   if (!rules.includes(SEEDANCE_NO_SUBTITLES)) rules.push(SEEDANCE_NO_SUBTITLES);
   const crowded = cuts.some((c) => (c?.characters ?? []).filter((id) => id !== 'VO').length >= 2);
   if (crowded && !rules.includes(SEEDANCE_NO_TWINS)) rules.push(SEEDANCE_NO_TWINS);
+  // 挂了分镜图参考才追加身份锁——没有参考图时这句话无从执行，反而稀释约束
+  if (frames.some(Boolean) && !rules.includes(SEEDANCE_IDENTITY_LOCK)) rules.push(SEEDANCE_IDENTITY_LOCK);
   out.push('【约束】', ...rules.map((r, i) => `${i + 1}. ${r}`));
   return { prompt: out.join('\n'), refs };
 }
