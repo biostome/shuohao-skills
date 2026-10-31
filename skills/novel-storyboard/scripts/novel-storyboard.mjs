@@ -1073,6 +1073,8 @@ const I18N = {
     seedancePrompt: 'Seedance 提示词',
     seedanceSection: 'Seedance 视频提示词',
     blockingLabel: '走位',
+    segVideo: '成片预览',
+    videoSeekHint: '点切点时间戳，成片跳到该处',
     compLine: (c) => [c.lens, c.cameraPosition, c.composition, c.eyeline && `视线 ${c.eyeline}`, c.focus && `焦点 ${c.focus}`, STABILITY[c.stability] ?? c.stability].filter(Boolean).join(' · '),
     showSegs: '▾ 展开全部段',
     hideSegs: '▴ 收起',
@@ -1140,6 +1142,8 @@ const I18N = {
     seedancePrompt: 'Seedance prompt',
     seedanceSection: 'Seedance video prompt',
     blockingLabel: 'Blocking',
+    segVideo: 'Rendered cut',
+    videoSeekHint: 'click a cut timestamp to seek the video',
     compLine: (c) => [c.lens, c.cameraPosition, c.composition, c.eyeline && `eyeline ${c.eyeline}`, c.focus && `focus ${c.focus}`, ({ stable: 'stable', 'slight-shake': 'slight shake', handheld: 'handheld' })[c.stability] ?? c.stability].filter(Boolean).join(' · '),
     showSegs: '▾ Show all segments',
     hideSegs: '▴ Collapse',
@@ -1329,6 +1333,18 @@ const PORTRAIT_FRAME_CSS = `
 .frame{aspect-ratio:9/16}
 img.frame{width:100%;margin:0 auto}`;
 
+// 段级成片：竖屏时播放器按 9:16 收窄，横屏时按 16:9 放宽
+const SEG_VIDEO_CSS = `
+/* 段级成片预览 */
+.segvid{display:flex;gap:16px;align-items:center;margin:14px 0 0;padding:12px 14px;border:1px solid var(--rule-2);border-radius:6px;background:var(--seal-soft)}
+.segvid video{display:block;height:264px;border-radius:4px;background:#000}
+.segvid .vmeta{display:flex;flex-direction:column;gap:6px;min-width:0}
+.segvid .vmeta b{font:500 11px/1 var(--mono);letter-spacing:.18em;color:var(--seal)}
+.segvid .vmeta .vsec{font:500 10px/1.6 var(--mono);color:var(--ink-2)}
+.segvid .vmeta .vhint{font-size:11px;color:var(--ink-3)}
+button.cut-t.seek{cursor:pointer}
+button.cut-t.seek:hover{color:var(--seal);text-decoration:underline}`;
+
 export function renderHtml(board, ctx = {}) {
   const lang = ctx.lang ?? board?.lang ?? 'zh';
   const t = tOf(lang);
@@ -1379,6 +1395,13 @@ export function renderHtml(board, ctx = {}) {
           const scene = sEp?.scenes?.[seg.sceneIndex - 1];
           const starts = cutStarts(seg.cuts);
           const frame = (ci) => (ctx.image ? ctx.image('frame', `${seg.id}/f${ci + 1}.png`) : null);
+          // 段级成片：约定路径 <段号>/<段号>.mp4（跟分镜图同一个目录解析器）
+          const video = ctx.video ? ctx.video(`${seg.id}/${seg.id}.mp4`) : null;
+          // 有成片时切点时间戳变成跳播按钮（data-t 秒数，由内嵌脚本接管点击）
+          const cutTime = (ci, cut) =>
+            video
+              ? `<button class="cut-t seek" data-t="${starts[ci]}" title="${esc(t.videoSeekHint)}">${esc(t.atSec(starts[ci]))} · ${cut.seconds}s</button>`
+              : `<span class="cut-t">${esc(t.atSec(starts[ci]))} · ${cut.seconds}s</span>`;
 
           // 分镜图跟着它自己的那一切走：每行描述右侧一格竖图位，
           // 有图贴图、没图贴提示词卡——图和它描述的是同一件事，不该分离到段首去
@@ -1403,7 +1426,7 @@ export function renderHtml(board, ctx = {}) {
   <div class="cut-b">
     <div class="cut-h">
       <b>#${ci + 1}</b>
-      <span class="cut-t">${esc(t.atSec(starts[ci]))} · ${cut.seconds}s</span>
+      ${cutTime(ci, cut)}
       <span class="cut-sc">${esc(t.sizeName(cut.size))} · ${esc(cut.camera)}</span>
       ${rc ? `<span class="cut-rc">${esc(rc.name)}${rc.drift ? `<sup title="${esc(rc.drift)}">≠</sup>` : ''}</span>` : ''}
       ${(cut.characters ?? []).map((id) => `<span class="chip">${esc(n.char(id))}</span>`).join('')}
@@ -1427,6 +1450,7 @@ export function renderHtml(board, ctx = {}) {
     <span class="beatsref">${esc(t.beatsLabel(seg.sceneIndex, seg.cuts[0]?.beats?.[0], seg.cuts[seg.cuts.length - 1]?.beats?.[1]))}</span>
   </header>
   ${seg.blocking ? `<p class="seg-block"><b>${esc(t.blockingLabel)}</b>${esc(seg.blocking)}</p>` : ''}
+  ${video ? `<div class="segvid"><video src="${esc(video)}"${frame(0) ? ` poster="${esc(frame(0))}"` : ''} controls preload="metadata" playsinline></video><div class="vmeta"><b>${esc(t.segVideo)}</b><span class="vsec">${esc(t.secBadge(segSeconds(seg), seg.cuts.length))}</span><span class="vhint">${esc(t.videoSeekHint)}</span></div></div>` : ''}
   <div class="duo">
     <ol class="cuts">
 ${cutRows}
@@ -1648,7 +1672,7 @@ a.chip:hover{border-color:var(--seal);color:var(--seal)}
 .ptab{font:500 11px/1 var(--sans);letter-spacing:.08em;color:var(--ink-3);background:none;border:0;
   border-bottom:1.5px solid transparent;padding:4px 6px;cursor:pointer}
 .ptab.on{color:var(--ink);border-bottom-color:var(--seal)}
-.ptab:focus-visible{outline:2px solid var(--seal);outline-offset:2px}${frameAspectCss}
+.ptab:focus-visible{outline:2px solid var(--seal);outline-offset:2px}${frameAspectCss}${SEG_VIDEO_CSS}
 
 /* 03 generation batches */
 .batches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
@@ -1868,6 +1892,18 @@ document.addEventListener('click', (e) => {
   panel.querySelector('.pp-h .copy').dataset.copy = panel.querySelectorAll('.pp')[i].textContent;
 });
 
+// 成片跳播：点切点时间戳，把本段成片跳到该切点并播放
+// （没挂成片的段里时间戳是 span，进不了这个分支）
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('button.cut-t.seek');
+  if (!b) return;
+  const v = b.closest('.segcard')?.querySelector('.segvid video');
+  if (!v) return;
+  v.currentTime = Number(b.dataset.t) + 0.01;
+  v.play().catch(() => {});
+  v.closest('.segvid').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+});
+
 // 复制提示词
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest('.copy');
@@ -2073,6 +2109,11 @@ function main(argv) {
       const abs = join(kind === 'sheet' ? sheetsDir : framesDir, rel);
       return existsSync(abs) ? relative(process.cwd(), abs).split(sep).join('/') : null;
     };
+    // 段级成片（<段号>/<段号>.mp4）跟分镜图同一个目录解析
+    ctx.video = (rel) => {
+      const abs = join(framesDir, rel);
+      return existsSync(abs) ? relative(process.cwd(), abs).split(sep).join('/') : null;
+    };
     process.stdout.write((rest.includes('--html') ? renderHtml(board, ctx) : renderMarkdown(board, ctx)) + '\n');
     return;
   }
@@ -2089,10 +2130,19 @@ function main(argv) {
     // 分镜图在哪由用户指定：给了 --frames 就把找得到的拷进包里，不要求用户先手动放进去
     const framesFlag = flag(rest, '--frames');
     let copied = 0;
+    let copiedVids = 0;
     if (framesFlag) {
       const from = resolve(framesFlag);
       for (const ep of board?.episodes ?? []) {
         for (const seg of ep?.segments ?? []) {
+          // 段级成片（<段号>/<段号>.mp4）也一并拷进包
+          const vsrc = join(from, seg.id, `${seg.id}.mp4`);
+          const vdst = resolve(dir, seg.id, `${seg.id}.mp4`);
+          if (existsSync(vsrc) && vsrc !== vdst) {
+            mkdirSync(resolve(vdst, '..'), { recursive: true });
+            copyFileSync(vsrc, vdst);
+            copiedVids += 1;
+          }
           (seg.cuts ?? []).forEach((_, i) => {
             const src = join(from, seg.id, `f${i + 1}.png`);
             const dst = resolve(dir, seg.id, `f${i + 1}.png`);
@@ -2123,13 +2173,13 @@ function main(argv) {
     if (protocol === 'seedance') {
       console.log(`✓ ${segN} 段 Seedance 投产包 → ${resolve(dir)}/（每段一个文件夹：seedance.md + 附件；根部 seedance-manifest.json）`);
       if (pack.copies.length) console.log(`  从 ${sheetsDir} 拷入 ${pack.copies.length} 张设定图`);
-      if (framesFlag) console.log(`  从 ${resolve(framesFlag)} 拷入 ${copied} 张分镜图`);
+      if (framesFlag) console.log(`  从 ${resolve(framesFlag)} 拷入 ${copied} 张分镜图${copiedVids ? `、${copiedVids} 段成片视频` : ''}`);
       if (pack.missingTotal) console.log(`⚠️ 缺 ${pack.missingTotal} 个附件，已在 seedance-manifest.json 的 missing 里标注——提交前先补齐`);
       console.log('  视觉风格（画风层）不在包里，提交时附加');
       return;
     }
     console.log(`✓ ${segN} 段投产包 → ${resolve(dir)}/（每段一个文件夹：分镜图 + prompt.md；根部 manifest.json）`);
-    if (framesFlag) console.log(`  从 ${resolve(framesFlag)} 拷入 ${copied} 张分镜图`);
+    if (framesFlag) console.log(`  从 ${resolve(framesFlag)} 拷入 ${copied} 张分镜图${copiedVids ? `、${copiedVids} 段成片视频` : ''}`);
     if (pack.missingTotal) console.log(`⚠️ 缺 ${pack.missingTotal} 张分镜图，已在 manifest 的 missing 里标注——喂 H3 前先补齐`);
     return;
   }

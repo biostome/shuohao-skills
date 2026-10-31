@@ -807,6 +807,19 @@ ok(html.includes('老周'), 'html 里 ID 换成名字');
   ok(withImg.includes('"E01-01/f2.png"'), '第 2 格分镜图同样从段文件夹读');
   ok(!withImg.includes('未生成'), '有图时不再显示占位');
 }
+// 段级成片：ctx.video 命中 <段号>/<段号>.mp4 时出播放器，切点时间戳变跳播按钮
+{
+  ok(!html.includes('class="segvid"'), '默认无成片：不插播放器块');
+  ok(!html.includes('class="cut-t seek"'), '默认无成片：切点时间戳仍是纯文本');
+  const withVid = renderHtml(FIXTURE, { ...CTX, image: (kind, rel) => rel, video: (rel) => rel });
+  ok(withVid.includes('.segvid'), '有成片：插播放器样式');
+  ok(withVid.includes('<video src="E01-01/E01-01.mp4"'), '成片按 <段号>/<段号>.mp4 解析');
+  ok(withVid.includes('poster="E01-01/f1.png"'), '播放器海报用该段第 1 切分镜图');
+  const card1 = withVid.slice(withVid.indexOf('id="seg-E01-01"'), withVid.indexOf('id="seg-E01-02"'));
+  const seg1 = FIXTURE.episodes[0].segments.find((s) => s.id === 'E01-01');
+  ok((card1.match(/class="cut-t seek"/g) || []).length === seg1.cuts.length, '每一切的切点都变成跳播按钮');
+  ok(card1.includes('data-t="6"'), '跳播按钮带切点秒数');
+}
 // 分镜图位跟着正式画幅走；旧 _meta 和 frame 尾缀只保留为兼容路径
 {
   const styleOf = (h) => h.match(/<style>[\s\S]*?<\/style>/)[0];
