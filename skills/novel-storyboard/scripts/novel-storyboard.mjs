@@ -1193,6 +1193,10 @@ const I18N = {
     subLabel: (i) => `子分镜 ${i}`,
     frameMissing: (i) => `#${i} 未生成`,
     framePrompt: '分镜图提示词',
+    frameRow: '出图',
+    frameRowTitle: '分镜图提示词：照这句出分镜图（静帧只承载此刻的脸）',
+    shotRow: '出片',
+    shotRowTitle: '视频画面提示词：进 Seedance「画面」行与 H3 正文，只写能拍出来的动作',
     h3Prompt: 'H3 提示词',
     h3Section: 'H3 视频提示词',
     seedancePrompt: 'Seedance 提示词',
@@ -1209,7 +1213,7 @@ const I18N = {
     epJumpHint: '只看这一集',
     copy: '复制', copied: '已复制', copyFailed: '复制失败',
     dialogueCols: ['段 · 切', '说话人', '台词', '台词秒数'],
-    cutCols: ['切', '起点', '秒', '景别', '运镜', '配方', '画面', '人物'],
+    cutCols: ['切', '起点', '秒', '景别', '运镜', '配方', '分镜图提示词', '视频画面', '台词', '人物'],
     batchCols: ['场景', '光照', '段', '需要的角色', '道具'],
     atSec: (t) => `${t.toFixed(2)}s 起`,
     batchLabel: (num) => `批次 ${num}`,
@@ -1264,6 +1268,10 @@ const I18N = {
     subLabel: (i) => `sub-frame ${i}`,
     frameMissing: (i) => `#${i} not generated`,
     framePrompt: 'Frame prompt',
+    frameRow: 'Still',
+    frameRowTitle: 'Frame prompt — this sentence renders the still image',
+    shotRow: 'Motion',
+    shotRowTitle: 'Video prompt — feeds the Seedance picture line and the H3 body; actions only',
     h3Prompt: 'H3 prompt',
     h3Section: 'H3 video prompt',
     seedancePrompt: 'Seedance prompt',
@@ -1280,7 +1288,7 @@ const I18N = {
     epJumpHint: 'Show this episode only',
     copy: 'Copy', copied: 'Copied', copyFailed: 'Copy failed',
     dialogueCols: ['Segment · cut', 'Speaker', 'Line', 'Seconds'],
-    cutCols: ['Cut', 'Start', 'Sec', 'Size', 'Camera', 'Recipe', 'Picture', 'Characters'],
+    cutCols: ['Cut', 'Start', 'Sec', 'Size', 'Camera', 'Recipe', 'Frame prompt', 'Motion', 'Line', 'Characters'],
     batchCols: ['Scene', 'Lighting', 'Segments', 'Characters needed', 'Props'],
     atSec: (t) => `from ${t.toFixed(2)}s`,
     batchLabel: (num) => `Batch ${num}`,
@@ -1378,8 +1386,10 @@ export function renderMarkdown(board, ctx = {}) {
       out.push(mdHead(t.cutCols));
       const starts = cutStarts(seg.cuts);
       seg.cuts.forEach((cut, ci) => {
-        const summary = cutBeats(cut, scene)
-          .map((b) => (b.kind === 'line' ? t.speakerLine(n.char(b.speaker), b.text) : b.text))
+        // 只列真正进生成的两层 + 台词；剧本动作拍不上表（它不进任何提示词）
+        const lines = cutBeats(cut, scene)
+          .filter((b) => b.kind === 'line')
+          .map((b) => t.speakerLine(n.char(b.speaker), b.text))
           .join(' ');
         // md 没有 title 属性，偏离的建议值直接写在格子里
         const rc = cutRecipe(cut, ctx.recipes, t);
@@ -1387,7 +1397,8 @@ export function renderMarkdown(board, ctx = {}) {
           `#${ci + 1}`, `${starts[ci].toFixed(2)}s`, cut.seconds,
           t.sizeName(cut.size), t.cameraLabel(cut.camera),
           rc ? `${rc.name}${rc.drift ? ` ≠（${rc.drift}）` : ''}` : t.recipeNone,
-          summary, (cut.characters ?? []).map(n.char).join(t.listSep),
+          cut.frame ?? '', cut.shot ?? '', lines,
+          (cut.characters ?? []).map(n.char).join(t.listSep),
         ]));
       });
       const sd = seedancePrompt(seg, { scene, names: n, image: ctx.image ?? null, constraints: ctx.constraints ?? [] });
@@ -1537,20 +1548,25 @@ export function renderHtml(board, ctx = {}) {
 
           const cutRows = seg.cuts
             .map((cut, ci) => {
-              const beats = cutBeats(cut, scene);
-              const summary = beats
-                .map((b) =>
-                  b.kind === 'line'
-                    ? `<p class="sline"><b>${esc(n.char(b.speaker))}</b>${esc(b.text)}</p>`
-                    : `<p class="sact">${esc(b.text)}</p>`,
-                )
+              // 卡片只显示真正参与生成的内容：出图（frame）→ 出片（shot）→ 台词（进提示词的台词拍）。
+              // 剧本动作拍不进任何提示词，不再上卡片——要看剧本去 script.json，别在这里冒充提示词。
+              const lines = cutBeats(cut, scene)
+                .filter((b) => b.kind === 'line')
+                .map((b) => `<p class="sline"><b>${esc(n.char(b.speaker))}</b>${esc(b.text)}</p>`)
                 .join('');
+              const promptRow = (cls, label, title, text) =>
+                text
+                  ? `<p class="spr ${cls}" title="${esc(title)}"><b>${esc(label)}</b><span>${esc(text)}</span><button class="copy mini" data-copy="${esc(text)}">${esc(t.copy)}</button></p>`
+                  : '';
+              const prompts =
+                promptRow('sf', t.frameRow, t.frameRowTitle, cut.frame) +
+                promptRow('sv', t.shotRow, t.shotRowTitle, cut.shot);
               // 「配方」列：偏离建议景别／运镜的加 ≠ 上标，建议值写进 title——提示而已，不是门
               const rc = cutRecipe(cut, ctx.recipes, t);
               const shot = frame(ci);
               const fig = shot
                 ? `<a href="${esc(shot)}" target="_blank" rel="noopener"><img class="frame" src="${esc(shot)}" alt="${esc(`${seg.id}#${ci + 1}`)}" loading="lazy"></a>`
-                : `<div class="frame ph"><b>${esc(t.frameMissing(ci + 1))}</b><button class="copy mini" data-copy="${esc(cut.frame ?? '')}">${esc(t.copy)}</button></div>`;
+                : `<div class="frame ph"><b>${esc(t.frameMissing(ci + 1))}</b></div>`;
               return `<li class="cut">
   <div class="cut-b">
     <div class="cut-h">
@@ -1560,10 +1576,10 @@ export function renderHtml(board, ctx = {}) {
       ${rc ? `<span class="cut-rc">${esc(rc.name)}${rc.drift ? `<sup title="${esc(rc.drift)}">≠</sup>` : ''}</span>` : ''}
       ${(cut.characters ?? []).map((id) => `<span class="chip">${esc(n.char(id))}</span>`).join('')}
       ${(cut.props ?? []).map((id) => `<span class="chip prop">${esc(n.prop(id))}</span>`).join('')}
-      <button class="copy mini" data-copy="${esc(cut.frame ?? '')}">${esc(t.framePrompt)}</button>
     </div>
     ${t.compLine(cut) ? `<p class="scomp">${esc(t.compLine(cut))}</p>` : ''}
-    ${summary}
+    ${prompts}
+    ${lines}
   </div>
   <figure class="cut-fig">${fig}</figure>
 </li>`;
@@ -1784,6 +1800,13 @@ section.top-sec{margin-top:34px}
 .cut:hover .copy{opacity:1}
 .cut p{margin:3px 0 0;font-size:12px;line-height:1.6}
 .sact{color:var(--ink-2)}
+/* 每切正文：只显示真正进生成的两层（出图 / 出片）+ 台词，剧本动作拍不再上卡片 */
+.spr{display:flex;gap:8px;align-items:flex-start;margin:3px 0 0;font-size:12.5px;line-height:1.62;color:var(--ink-2)}
+.spr>b{flex:0 0 auto;margin-top:1px;padding:0 5px;border:1px solid var(--rule-2);border-radius:3px;font:500 9.5px/1.7 var(--mono);letter-spacing:.08em;color:var(--seal);white-space:nowrap}
+.spr.sv>b{color:var(--ink-2)}
+.spr>span{min-width:0}
+.spr .copy{flex:0 0 auto;opacity:0;transition:opacity .15s}
+.spr:hover .copy,.spr .copy.copied{opacity:1}
 .sline{font-family:var(--serif)}
 .sline b{font-weight:500;margin-right:6px;color:var(--seal)}
 .chip{font:400 10.5px/1.6 var(--mono);border:1px solid var(--rule-2);border-radius:2px;

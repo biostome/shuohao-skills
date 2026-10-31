@@ -1005,4 +1005,20 @@ ok(html.includes('老周'), 'html 里 ID 换成名字');
   ok(!w2.some((x) => x.startsWith('E01-02#3')), '物件特写豁免，不逼着写脸');
   ok(frameFaceWarnings(FIXTURE).length >= 0 && !frameFaceWarnings(FIXTURE).some((x) => x.includes('undefined')), '真实样例跑得通');
 }
+
+// 卡片只显示真正进生成的两层：出图（frame）→ 出片（shot）；不进提示词的剧本动作拍不上卡片
+{
+  const seg = FIXTURE.episodes[0].segments.find((s) => s.id === 'E01-01');
+  const html = renderHtml(FIXTURE, { ...CTX, image: () => null });
+  ok(html.includes(seg.cuts[0].frame), '卡片显示分镜图提示词全文');
+  ok(html.includes(seg.cuts[0].shot), '卡片显示视频画面提示词全文');
+  ok(html.includes('class="spr sf"') && html.includes('class="spr sv"'), '两层各带出图／出片标签');
+  ok(!html.includes('class="sact"'), '剧本动作拍不再上卡片');
+  ok(!html.includes('冷开场：一个年轻女人抱着旧皮箱'), '不进提示词的剧本节拍不冒充提示词');
+
+  const md = renderMarkdown(FIXTURE, { ...CTX, image: () => null });
+  ok(md.includes('分镜图提示词') && md.includes('视频画面'), 'md 表头列出出图／出片两列');
+  ok(md.includes(seg.cuts[0].shot.slice(0, 12)), 'md 行内有视频画面正文');
+  ok(!md.includes('冷开场：一个年轻女人抱着旧皮箱'), 'md 也不再列剧本动作拍');
+}
 console.log(`✓ ${passed} 项自测全部通过`);
