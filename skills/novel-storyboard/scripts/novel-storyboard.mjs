@@ -461,6 +461,45 @@ export function pacingWarnings(board, script) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 静帧神情告警                                                         */
+/* ------------------------------------------------------------------ */
+/*
+ * 分镜图是照着 frame 提示词生成的，而分镜图又是视频的参考图——
+ * frame 里没写脸，模型就给一张中性脸，视频全程跟着平。所以「人物没有心境」
+ * 的第一现场在这里，不在视频提示词。
+ *
+ * 两种写法必错：
+ *   缺神情：只写动作和光线，一个五官词都没有 → 模型默认中性脸
+ *   否定式：写「面无表情」「脸上没有任何起伏」→ 模型真的只给一张空脸，
+ *           因为它没有可执行的正向指令；情绪要写成肌群状态（下颌咬住、
+ *           眉压低、嘴唇抿成一条线、眼白里有血丝），不能写成「没有情绪」
+ * 只提示不设门，同 pacingWarnings。
+ */
+const FACE_CUES = /眼|眉|嘴|唇|下颌|腮|脸|表情|神情|眼神|咬|盯|抿|绷|颧/;
+const FACE_NEGATION = /面无表情|没有任何起伏|毫无表情|无表情|神色如常|平静如常/;
+
+export function frameFaceWarnings(board) {
+  const out = [];
+  for (const ep of board?.episodes ?? []) {
+    for (const seg of ep?.segments ?? []) {
+      (seg?.cuts ?? []).forEach((cut, ci) => {
+        const f = String(cut?.frame ?? '');
+        if (!f.trim()) return;
+        const neg = f.match(FACE_NEGATION);
+        if (neg) {
+          out.push(`${seg.id}#${ci + 1} 用否定式写表情（「${neg[0]}」）：模型只会给一张空脸，改成肌群状态（下颌咬住／眉压低／嘴唇抿成线）`);
+          return;
+        }
+        if (!FACE_CUES.test(f)) {
+          out.push(`${seg.id}#${ci + 1} 静帧没写神情：只有动作和光，模型会给中性脸，视频跟着平`);
+        }
+      });
+    }
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* 门失败累积                                                           */
 /* ------------------------------------------------------------------ */
 /*
@@ -1140,6 +1179,7 @@ const I18N = {
     seedanceSection: 'Seedance 视频提示词',
     blockingLabel: '走位',
     pacingHint: (n) => `\n⚠️ 节奏告警 ${n} 处（不阻塞，但成片会显赶）：`,
+    faceHint: (n) => `\n⚠️ 静帧神情告警 ${n} 处（分镜图照 frame 生成，frame 没写脸，成片就没情绪）：`,
     segVideo: '成片预览',
     videoSeekHint: '点切点时间戳，成片跳到该处',
     compLine: (c) => [c.lens, c.cameraPosition, c.composition, c.eyeline && `视线 ${c.eyeline}`, c.focus && `焦点 ${c.focus}`, STABILITY[c.stability] ?? c.stability].filter(Boolean).join(' · '),
@@ -1210,6 +1250,7 @@ const I18N = {
     seedanceSection: 'Seedance video prompt',
     blockingLabel: 'Blocking',
     pacingHint: (n) => `\n⚠️ ${n} pacing warnings (non-blocking; they show up as rushed cuts):`,
+    faceHint: (n) => `\n⚠️ ${n} frame-expression warnings (frames are rendered from these prompts — no face written, no feeling on screen):`,
     segVideo: 'Rendered cut',
     videoSeekHint: 'click a cut timestamp to seek the video',
     compLine: (c) => [c.lens, c.cameraPosition, c.composition, c.eyeline && `eyeline ${c.eyeline}`, c.focus && `focus ${c.focus}`, ({ stable: 'stable', 'slight-shake': 'slight shake', handheld: 'handheld' })[c.stability] ?? c.stability].filter(Boolean).join(' · '),
@@ -2148,6 +2189,9 @@ function main(argv) {
       // 节奏告警：配时问题靠数算，不靠眼力——只提示不设门，跟配方偏离同一档
       const pacing = pacingWarnings(board, ctx.script);
       if (pacing.length) console.error(`${I18N.zh.pacingHint(pacing.length)}\n${pacing.map((x) => '  ' + x).join('\n')}`);
+      // 静帧神情：分镜图照着 frame 生成，frame 没写脸就是成片没情绪的第一现场
+      const faces = frameFaceWarnings(board);
+      if (faces.length) console.error(`${I18N.zh.faceHint(faces.length)}\n${faces.map((x) => '  ' + x).join('\n')}`);
       if (failedN) process.exit(1);
       return;
     }

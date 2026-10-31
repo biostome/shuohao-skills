@@ -35,6 +35,7 @@ import {
   SEEDANCE_NO_SUBTITLES,
   SEEDANCE_NO_TWINS,
   SEEDANCE_PACING,
+  frameFaceWarnings,
   pacingWarnings,
   seedancePrompt,
   seedFromScript,
@@ -980,5 +981,18 @@ ok(html.includes('老周'), 'html 里 ID 换成名字');
   const seg = slow.episodes[0].segments.find((s) => s.cuts.some((c) => (c.beats ?? []).length < 3)) ?? slow.episodes[0].segments[0];
   seg.cuts[0].seconds = 8;
   ok(!pacingWarnings({ episodes: [{ ep: 1, segments: [seg] }] }, SCRIPT).some((x) => x.includes('语速偏快')), '切拉长后不再报语速偏快');
+}
+// 静帧神情告警：分镜图照 frame 生成，frame 平，图平，视频平——第一现场在提示词
+{
+  const b = { episodes: [{ ep: 1, segments: [{ id: 'E01-01', cuts: [
+    { frame: '特写，一个男人站在马路边，早春阴天的平光压在肩上。' },
+    { frame: '特写，他侧脸贴着手机，脸上没有任何起伏。' },
+    { frame: '特写，他下颌咬住，眉压低，眼睛盯死画面上方那扇窗。' },
+  ] }] }] };
+  const w = frameFaceWarnings(b);
+  ok(w.some((x) => x.startsWith('E01-01#1 静帧没写神情')), '没写脸就告警');
+  ok(w.some((x) => x.includes('否定式写表情')), '「没有任何起伏」这种否定式写法单独告警');
+  ok(!w.some((x) => x.startsWith('E01-01#3')), '写清肌群状态的切不告警');
+  ok(frameFaceWarnings(FIXTURE).length >= 0 && !frameFaceWarnings(FIXTURE).some((x) => x.includes('undefined')), '真实样例跑得通');
 }
 console.log(`✓ ${passed} 项自测全部通过`);
