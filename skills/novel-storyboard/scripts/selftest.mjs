@@ -993,6 +993,16 @@ ok(html.includes('老周'), 'html 里 ID 换成名字');
   ok(w.some((x) => x.startsWith('E01-01#1 静帧没写神情')), '没写脸就告警');
   ok(w.some((x) => x.includes('否定式写表情')), '「没有任何起伏」这种否定式写法单独告警');
   ok(!w.some((x) => x.startsWith('E01-01#3')), '写清肌群状态的切不告警');
+  // 手部/物件特写走各自的标准：手查力道，物件直接豁免
+  const b2 = { episodes: [{ ep: 1, segments: [{ id: 'E01-02', cuts: [
+    { frame: '特写，一只手抓住被角。', frameFocus: 'hand' },
+    { frame: '特写，指节顶得发白、手背青筋绷起，被单攥出褶。', frameFocus: 'hand' },
+    { frame: '大特写，报案回执的纸面，右下角压着一枚红章。', frameFocus: 'prop' },
+  ] }] }] };
+  const w2 = frameFaceWarnings(b2);
+  ok(w2.some((x) => x.includes('手部特写没写张力')), '手部特写没力道要告警');
+  ok(!w2.some((x) => x.startsWith('E01-02#2')), '写了指节/青筋的手部特写不告警');
+  ok(!w2.some((x) => x.startsWith('E01-02#3')), '物件特写豁免，不逼着写脸');
   ok(frameFaceWarnings(FIXTURE).length >= 0 && !frameFaceWarnings(FIXTURE).some((x) => x.includes('undefined')), '真实样例跑得通');
 }
 console.log(`✓ ${passed} 项自测全部通过`);

@@ -476,6 +476,10 @@ export function pacingWarnings(board, script) {
  * 只提示不设门，同 pacingWarnings。
  */
 const FACE_CUES = /眼|眉|嘴|唇|下颌|腮|脸|表情|神情|眼神|咬|盯|抿|绷|颧/;
+// 手部特写没有脸可写，但张力不能丢——手是刘诚这类「声音平、身体狠」的角色唯一的表情
+const HAND_CUES = /指节|青筋|指腹|拇指|攥|握|抠|按到底|发白|发抖|颤/;
+// 背影/过肩看不到脸，情绪只剩姿态：肩线、后颈、脊背的松紧
+const BACK_CUES = /肩|背|后颈|脊|头微微|头低|头偏|侧脸|耳/;
 const FACE_NEGATION = /面无表情|没有任何起伏|毫无表情|无表情|神色如常|平静如常/;
 
 export function frameFaceWarnings(board) {
@@ -488,6 +492,22 @@ export function frameFaceWarnings(board) {
         const neg = f.match(FACE_NEGATION);
         if (neg) {
           out.push(`${seg.id}#${ci + 1} 用否定式写表情（「${neg[0]}」）：模型只会给一张空脸，改成肌群状态（下颌咬住／眉压低／嘴唇抿成线）`);
+          return;
+        }
+        // 物件特写（回执、门牌、道具）画面里没有脸，要求写神情只会逼出无意义的句子
+        if (cut?.frameFocus === 'prop') return;
+        // 手部特写改查手：指节、青筋、力道，而不是「眼神」
+        if (cut?.frameFocus === 'hand') {
+          if (!HAND_CUES.test(f)) {
+            out.push(`${seg.id}#${ci + 1} 手部特写没写张力：手指的状态就是这一镜的表情，写指节发白／拇指按到底／手背青筋`);
+          }
+          return;
+        }
+        // 背影/过肩镜看不到脸，改查肩线与后颈——姿态就是它的表情
+        if (cut?.frameFocus === 'back') {
+          if (!BACK_CUES.test(f)) {
+            out.push(`${seg.id}#${ci + 1} 背影镜没写姿态：看不到脸，情绪只能靠肩线松紧／头偏的角度／后颈的僵`);
+          }
           return;
         }
         if (!FACE_CUES.test(f)) {
