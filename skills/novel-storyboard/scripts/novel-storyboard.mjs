@@ -173,6 +173,76 @@ export function h3CutSlices(prompt, cutCount, lang = 'en') {
   return slices;
 }
 
+/*
+ * 数据派生的 H3 提示词——唯一事实源。
+ * 手写 h3Prompt 容易和分镜数据漂移（实测过：音效次数、shot 与运镜矛盾、硬冲突），
+ * 所以段级 H3 提示词不再手写，全部由本函数从分镜数据确定性拼出：
+ *   对齐指令  = h3AlignmentLine（切点与分镜结构推导，validate 逐字对账）
+ *   每镜段落  = [镜头 k] + 锚定句 + 运镜词 + shot（画面）+ performance（表演）+ 台词 <d> 块
+ *   段尾      = 整体音景（soundscape）+ 非叙事配乐（music）
+ * 这样 H3、Seedance、分镜图三处都从同一份数据长出来，不会再各写各的导致误判。
+ * 手写字段若仍在（旧数据 / 测试 fixture）则优先，缺了才派生——平滑过渡。
+ */
+const H3_ANCHOR = {
+  zh: (k) => `按参考图 ${k} 锚定构图与人物状态：`,
+  en: (k) => `Anchor composition and character state to Reference Picture ${k}: `,
+};
+// 运镜词必须含 CAMERA_MOVES[cut.camera] 的子串，否则 camera-phrase 门拦不住。
+// 这里给三个高频运镜更自然的写法，其余直接回退到官方中文词表。
+const H3_CAMERA_ZH = {
+  'Static Shot': '固定机位',
+  'Push In': '镜头推近',
+  'Pull Out': '镜头拉出',
+};
+const h3CameraPhrase = (camera, lang) => {
+  if (lang === 'en') return String(camera ?? '').toLowerCase();
+  return H3_CAMERA_ZH[camera] ?? CAMERA_MOVES[camera] ?? '';
+};
+
+export function deriveH3(seg, { scene = null, promptLang = 'zh' } = {}) {
+  const lang = promptLang === 'en' ? 'en' : 'zh';
+  const tk = H3_TOKENS[lang] ?? H3_TOKENS.zh;
+  const cuts = seg?.cuts ?? [];
+  const dTag = lang === 'en' ? 'English' : 'Chinese';
+  const out = [h3AlignmentLine(cuts, lang), ''];
+  out.push(tk.fields[0]);
+  const starts = cutStarts(cuts);
+  cuts.forEach((cut, ci) => {
+    const k = ci + 1;
+    const marker = k === 1 ? tk.shot(1) : tk.cutMark(k, h3CutTime(starts[ci]));
+    const cam = h3CameraPhrase(cut?.camera, lang);
+    const shot = String(cut?.shot ?? '').trim().replace(/[。.\s]+$/, '');
+    const perf = String(cut?.performance ?? '').trim();
+    let body = marker + H3_ANCHOR[lang](k) + (cam ? `${cam}，` : '') + shot;
+    if (perf) body += `。${perf}`;
+    const lines = [];
+    if (scene) {
+      const [from, to] = cut?.beats ?? [];
+      if (Number.isInteger(from) && Number.isInteger(to)) {
+        for (const b of scene.beats.slice(from - 1, to)) {
+          if (b.kind === 'line') lines.push(b.text);
+        }
+      }
+    }
+    // 每行台词各占一个 <d>[lang] 文本 </d> 块——门逐块对账，合成一块会漏检
+    for (const text of lines) body += ` <d>[${dTag}] ${text} </d>`;
+    out.push(body);
+  });
+  out.push('');
+  const soundscape = String(seg?.soundscape ?? '').trim();
+  const music = String(seg?.music ?? '').trim();
+  out.push(tk.fields[1] + soundscape);
+  out.push(tk.fields[2] + music);
+  return out.join('\n');
+}
+
+/** 取段级 H3 提示词：手写优先（兼容旧数据 / 测试 fixture），缺了就从数据派生。 */
+export function h3Of(seg, { scene = null, promptLang = 'zh' } = {}) {
+  const stored = seg?.h3Prompt;
+  if (typeof stored === 'string' && stored.trim()) return stored;
+  return deriveH3(seg, { scene, promptLang });
+}
+
 /* ------------------------------------------------------------------ */
 /* Seedance 提示词：程序按官方结构拼                                       */
 /* ------------------------------------------------------------------ */
@@ -451,7 +521,7 @@ export function pacingWarnings(board, script) {
         out.push(`${seg.id} 没有停顿镜：${cuts.length} 切全在动作里，加一处 hold（人不动，只有呼吸或眼神）`);
       }
       // 视频提示词里没有表演层，成片就只剩动作——心境只能靠演员的脸和停顿，不靠台词
-      const h3 = String(seg?.h3Prompt ?? '');
+      const h3 = h3Of(seg, { scene });
       if (h3 && !/表演|神情|语气|眼神|呼吸|停顿|盯|绷|咽|低声|压低/.test(h3)) {
         out.push(`${seg.id} 视频提示词没有表演层：补语气／眼神落点／一处停顿，否则成片只有动作没有心境`);
       }
@@ -733,12 +803,13 @@ export function gateReport(board, ctx = {}) {
       const sid = seg?.id ?? '?';
       const cuts = seg?.cuts ?? [];
       const total = segSeconds(seg);
+      const scene = sEp ? sEp.scenes[seg?.sceneIndex - 1] : null;
 
       if (!(total > 0) || total > params.maxSegmentSeconds) {
         bad.segCap.push(`${sid} 共 ${total} 秒`);
       }
 
-      const h3 = String(seg?.h3Prompt ?? '');
+      const h3 = h3Of(seg, { scene, promptLang });
       // H3 结构：首行对齐指令逐字对账（由分镜结构按 promptLang 推导），三字段按序，切点时刻逐个对
       const tk = H3_TOKENS[promptLang] ?? H3_TOKENS.zh;
       const wantLine = h3AlignmentLine(cuts, promptLang);
@@ -773,7 +844,6 @@ export function gateReport(board, ctx = {}) {
       if (/[（）()]/.test(String(seg?.music ?? ''))) bad.sd.push(`${sid} 的 music 自带了括号——程序会套（）`);
 
       const slices = h3CutSlices(h3, cuts.length, promptLang);
-      const scene = sEp ? sEp.scenes[seg?.sceneIndex - 1] : null;
       if (sEp && !scene) bad.refs.push(`${sid} 的 sceneIndex ${seg?.sceneIndex} 在剧本第 ${ep.ep} 集里不存在`);
       if (scene) {
         if (seg.sceneIndex < prevSceneIndex) bad.coverage.push(`${sid} 场次顺序倒退`);
@@ -996,7 +1066,7 @@ export function validateStoryboard(board, ctx = {}) {
       const sid = seg?.id ?? '?';
       if (typeof seg?.id !== 'string') p(`${label}有段缺 id`);
       if (!Number.isInteger(seg?.sceneIndex) || seg.sceneIndex < 1) p(`${sid} 缺 sceneIndex（剧本里第几场）`);
-      if (typeof seg?.h3Prompt !== 'string') p(`${sid} 缺 h3Prompt（H3 视频提示词，写法见 references/h3-prompt.md）`);
+      if (typeof seg?.h3Prompt !== 'string' && !(seg?.cuts?.length)) p(`${sid} 缺 h3Prompt（H3 视频提示词；有分镜时可由分镜数据派生，无分镜则无法派生）`);
       if (!Array.isArray(seg?.cuts) || seg.cuts.length === 0) {
         p(`${sid} 没有分镜`);
         continue;
@@ -1109,7 +1179,8 @@ export function exportPack(
       const mapping = (seg.cuts ?? [])
         .map((_, i) => `- Picture ${i + 1} = f${i + 1}.png${i === 0 ? '（**首帧**，钉 0.00 秒）' : `（钉 ${starts[i].toFixed(2)} 秒）`}`)
         .join('\n');
-      const promptMd = `# ${seg.id} · H3 提示词\n\n首帧 = **f1.png**。图片按 Picture 序号挂载：\n\n${mapping}\n\n---\n\n${seg.h3Prompt ?? ''}\n`;
+      const scene = expanded.get(ep.ep)?.scenes?.[seg.sceneIndex - 1] ?? null;
+      const promptMd = `# ${seg.id} · H3 提示词\n\n首帧 = **f1.png**。图片按 Picture 序号挂载：\n\n${mapping}\n\n---\n\n${h3Of(seg, { scene, promptLang: board.promptLang ?? 'zh' })}\n`;
       files.push({ path: `${prefix}${seg.id}/prompt.md`, content: promptMd });
       const pictures = (seg.cuts ?? []).map((_, i) => `${prefix}${seg.id}/f${i + 1}.png`);
       const missing = pictures.filter((rel) => !imageExists(rel));
@@ -1440,7 +1511,7 @@ export function renderMarkdown(board, ctx = {}) {
         ]));
       });
       const sd = seedancePrompt(seg, { scene, names: n, image: ctx.image ?? null, constraints: ctx.constraints ?? [] });
-      out.push('', `**${t.h3Section}**`, '', '```text', seg.h3Prompt ?? '', '```', '');
+      out.push('', `**${t.h3Section}**`, '', '```text', h3Of(seg, { scene, promptLang: board.promptLang ?? 'zh' }), '```', '');
       out.push(`**${t.seedanceSection}**`, '', '```text', sd.prompt, '```', '');
     }
   }
@@ -1641,9 +1712,9 @@ ${cutRows}
     <div class="ppanel">
       <div class="pp-h">
         <span class="ptabs"><button class="ptab on" data-i="0">${esc(t.h3Prompt)}</button><button class="ptab" data-i="1">${esc(t.seedancePrompt)}</button></span>
-        <button class="copy" data-copy="${esc(seg.h3Prompt ?? '')}">${esc(t.copy)}</button>
+        <button class="copy" data-copy="${esc(h3Of(seg, { scene, promptLang: board.promptLang ?? 'zh' }))}">${esc(t.copy)}</button>
       </div>
-      <pre class="pp on">${esc(seg.h3Prompt ?? '')}</pre>
+      <pre class="pp on">${esc(h3Of(seg, { scene, promptLang: board.promptLang ?? 'zh' }))}</pre>
       <pre class="pp">${esc(seedancePrompt(seg, { scene, names: n, image: ctx.image ?? null, constraints: ctx.constraints ?? [] }).prompt)}</pre>
     </div>
   </div>

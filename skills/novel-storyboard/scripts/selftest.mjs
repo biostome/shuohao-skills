@@ -23,6 +23,8 @@ import {
   h3AlignmentLine,
   h3CutSlices,
   h3CutTime,
+  deriveH3,
+  h3Of,
   h3Remainder,
   loadRecipes,
   parseCardFields,
@@ -100,6 +102,39 @@ eq(h3AlignmentLine([{ seconds: 5 }], 'zh'), '目标视频在 0.00 秒处完全�
   ok(slices[1].includes('bb') && !slices[1].includes('x'), '切片不吃到声景字段');
   const zh = h3CutSlices('整体视听描述：\n[镜头 1] aa\n[镜头 2] bb\n\n整体音景：x', 2, 'zh');
   ok(zh[0].includes('aa') && zh[1].includes('bb'), 'zh 模式按 [镜头 k] 切片');
+}
+
+/* ---------------- deriveH3：数据派生，退役手写 h3Prompt ---------------- */
+{
+  // 一段两切、zh 模式：对齐指令由切点推导，每镜段落含运镜词 + shot + 表演 + 台词 <d> 块
+  const seg = {
+    cuts: [
+      { seconds: 3, camera: 'Static Shot', shot: '一名男子走出门', performance: '脚步快半拍', beats: [1, 1] },
+      { seconds: 4, camera: 'Push In', shot: '镜头推近他的脸', performance: '下颌绷着', beats: [2, 2] },
+    ],
+    soundscape: '街面风声',
+    music: '低音提琴',
+  };
+  const scene = {
+    beats: [
+      { kind: 'line', text: '我要报警。' },
+      { kind: 'line', text: '人走了。' },
+    ],
+  };
+  const h3 = deriveH3(seg, { scene, promptLang: 'zh' });
+  ok(h3.startsWith('参考图与目标视频的对齐'), '派生 H3 首行是对齐指令（由切点推导）');
+  ok(h3.includes('图 2（来自镜头 2）对齐目标视频 3.00 秒处'), '多切对齐指令钉在累计秒数上');
+  ok(h3.includes('[镜头 1]') && h3.includes('[镜头 2] 于 00:03.000'), '每镜有 [镜头 k] 段落与切点时刻');
+  ok(h3.includes('固定机位') && h3.includes('镜头推近'), '运镜词进自己的 [镜头 k] 段落');
+  ok(h3.includes('一名男子走出门') && h3.includes('镜头推近他的脸'), 'shot（画面）进提示词');
+  ok(h3.includes('脚步快半拍') && h3.includes('下颌绷着'), 'performance（表演）进提示词');
+  ok(h3.includes('<d>[Chinese] 我要报警。 </d>') && h3.includes('<d>[Chinese] 人走了。 </d>'), '台词逐字进 <d> 块');
+  ok(h3.includes('整体视听描述：') && h3.includes('整体音景：街面风声') && h3.includes('非叙事配乐：低音提琴'), '三字段齐全、音景与配乐来自段级数据');
+  // 没有手写 h3Prompt 时 h3Of 退回派生
+  eq(h3Of(seg, { scene, promptLang: 'zh' }), h3, 'h3Of 在无手写时等于派生结果');
+  // 手写优先：存在则不被派生覆盖
+  const withHand = { ...seg, h3Prompt: '手写覆盖' };
+  eq(h3Of(withHand, { scene, promptLang: 'zh' }), '手写覆盖', 'h3Of 在手写存在时优先，不被派生覆盖');
 }
 eq(segSeconds({ cuts: [{ seconds: 3 }, { seconds: 4.5 }] }), 7.5, '段秒数 = 分镜求和');
 
