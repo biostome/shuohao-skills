@@ -36,6 +36,7 @@ import {
   SEEDANCE_NO_TWINS,
   SEEDANCE_PACING,
   frameFaceWarnings,
+  cameraShotWarnings,
   pacingWarnings,
   seedancePrompt,
   seedFromScript,
@@ -1020,5 +1021,21 @@ ok(html.includes('老周'), 'html 里 ID 换成名字');
   ok(md.includes('分镜图提示词') && md.includes('视频画面'), 'md 表头列出出图／出片两列');
   ok(md.includes(seg.cuts[0].shot.slice(0, 12)), 'md 行内有视频画面正文');
   ok(!md.includes('冷开场：一个年轻女人抱着旧皮箱'), 'md 也不再列剧本动作拍');
+}
+
+// 运镜与画面句不能各说一套：运镜归 camera，画面只写发生了什么
+{
+  const b = { episodes: [{ ep: 1, segments: [{ id: 'E01-01', cuts: [
+    { camera: 'Static Shot', shot: '镜头跟着他走出门。' },
+    { camera: 'Static Shot', shot: '他低头看手机。' },
+    { camera: 'Push In', shot: '镜头缓缓拉出，他转身。' },
+    { camera: 'Push In', shot: '他抬眼说话。' },
+  ] }] }] };
+  const w = cameraShotWarnings(b);
+  ok(w.some((x) => x.startsWith('E01-01#1') && x.includes('运镜=固定')), '固定机位却写跟镜头要告警');
+  ok(!w.some((x) => x.startsWith('E01-01#2')), '画面不重复运镜不告警');
+  ok(w.some((x) => x.startsWith('E01-01#3') && x.includes('不是同一个动作')), '推近却写拉出要告警');
+  ok(!w.some((x) => x.startsWith('E01-01#4')), '运镜只在字段里也放行');
+  ok(cameraShotWarnings(FIXTURE).length >= 0, '真实样例跑得通');
 }
 console.log(`✓ ${passed} 项自测全部通过`);

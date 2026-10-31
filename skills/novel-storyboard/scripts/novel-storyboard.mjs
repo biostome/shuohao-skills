@@ -519,6 +519,42 @@ export function frameFaceWarnings(board) {
   return out;
 }
 
+/*
+ * 运镜 vs 画面句：camera 是权威字段（Seedance 单列「运镜：」，H3 摘要也用它），
+ * shot 只该写「画面里发生了什么」。两处都写运镜，就必然出现「运镜：固定镜头」配
+ * 「镜头跟着他」这种自相矛盾的提示词——模型只会挑一个执行，另一句变成噪音。
+ */
+const SHOT_MOVE = /跟着|跟随|推近|推进|拉出|拉开|摇镜|横移|升起|下降|环绕|跟拍|手持/;
+const CAMERA_IS_STILL = /^Static/i;
+const CAMERA_DIRECTION = {
+  'Push In': /推近|推进/,
+  'Pull Out': /拉出|拉开/,
+  'Tracking Shot': /跟着|跟随|跟拍|横移/,
+};
+export function cameraShotWarnings(board) {
+  const out = [];
+  for (const ep of board?.episodes ?? []) {
+    for (const seg of ep?.segments ?? []) {
+      (seg?.cuts ?? []).forEach((cut, ci) => {
+        const shot = String(cut?.shot ?? '');
+        if (!shot.trim()) return;
+        const move = shot.match(SHOT_MOVE);
+        const cam = String(cut?.camera ?? '');
+        if (!move) return;
+        if (CAMERA_IS_STILL.test(cam)) {
+          out.push(`${seg.id}#${ci + 1} 运镜=固定，画面却写「${move[0]}」：运镜只归 camera 字段，画面句删掉镜头动作`);
+          return;
+        }
+        const want = CAMERA_DIRECTION[cam];
+        if (want && !want.test(move[0])) {
+          out.push(`${seg.id}#${ci + 1} 运镜=${cam}，画面却写「${move[0]}」：两处说的不是同一个动作`);
+        }
+      });
+    }
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ */
 /* 门失败累积                                                           */
 /* ------------------------------------------------------------------ */
@@ -1195,8 +1231,8 @@ const I18N = {
     framePrompt: '分镜图提示词',
     frameRow: '出图',
     frameRowTitle: '分镜图提示词：照这句出分镜图（静帧只承载此刻的脸）',
-    shotRow: '出片',
-    shotRowTitle: '视频画面提示词：进 Seedance「画面」行与 H3 正文，只写能拍出来的动作',
+    shotRow: '画面',
+    shotRowTitle: '本切画面句：只是段级视频提示词里的一行，完整提示词见右侧面板',
     h3Prompt: 'H3 提示词',
     h3Section: 'H3 视频提示词',
     seedancePrompt: 'Seedance 提示词',
@@ -1204,6 +1240,7 @@ const I18N = {
     blockingLabel: '走位',
     pacingHint: (n) => `\n⚠️ 节奏告警 ${n} 处（不阻塞，但成片会显赶）：`,
     faceHint: (n) => `\n⚠️ 静帧神情告警 ${n} 处（分镜图照 frame 生成，frame 没写脸，成片就没情绪）：`,
+    camShotHint: (n) => `\n⚠️ 运镜／画面打架 ${n} 处（运镜归 camera，画面句只写发生了什么）：`,
     segVideo: '成片预览',
     videoSeekHint: '点切点时间戳，成片跳到该处',
     compLine: (c) => [c.lens, c.cameraPosition, c.composition, c.eyeline && `视线 ${c.eyeline}`, c.focus && `焦点 ${c.focus}`, STABILITY[c.stability] ?? c.stability].filter(Boolean).join(' · '),
@@ -1270,8 +1307,8 @@ const I18N = {
     framePrompt: 'Frame prompt',
     frameRow: 'Still',
     frameRowTitle: 'Frame prompt — this sentence renders the still image',
-    shotRow: 'Motion',
-    shotRowTitle: 'Video prompt — feeds the Seedance picture line and the H3 body; actions only',
+    shotRow: 'Picture',
+    shotRowTitle: 'This cut\'s picture sentence — one line inside the segment-level video prompt; the full prompt is in the panel',
     h3Prompt: 'H3 prompt',
     h3Section: 'H3 video prompt',
     seedancePrompt: 'Seedance prompt',
@@ -1279,6 +1316,7 @@ const I18N = {
     blockingLabel: 'Blocking',
     pacingHint: (n) => `\n⚠️ ${n} pacing warnings (non-blocking; they show up as rushed cuts):`,
     faceHint: (n) => `\n⚠️ ${n} frame-expression warnings (frames are rendered from these prompts — no face written, no feeling on screen):`,
+    camShotHint: (n) => `\n⚠️ ${n} camera/picture contradictions (camera owns the move; the picture sentence only says what happens):`,
     segVideo: 'Rendered cut',
     videoSeekHint: 'click a cut timestamp to seek the video',
     compLine: (c) => [c.lens, c.cameraPosition, c.composition, c.eyeline && `eyeline ${c.eyeline}`, c.focus && `focus ${c.focus}`, ({ stable: 'stable', 'slight-shake': 'slight shake', handheld: 'handheld' })[c.stability] ?? c.stability].filter(Boolean).join(' · '),
@@ -2235,6 +2273,9 @@ function main(argv) {
       // 静帧神情：分镜图照着 frame 生成，frame 没写脸就是成片没情绪的第一现场
       const faces = frameFaceWarnings(board);
       if (faces.length) console.error(`${I18N.zh.faceHint(faces.length)}\n${faces.map((x) => '  ' + x).join('\n')}`);
+      // 运镜与画面句两处都写运镜 → 提示词自相矛盾，模型只会挑一句执行
+      const camShot = cameraShotWarnings(board);
+      if (camShot.length) console.error(`${I18N.zh.camShotHint(camShot.length)}\n${camShot.map((x) => '  ' + x).join('\n')}`);
       if (failedN) process.exit(1);
       return;
     }
