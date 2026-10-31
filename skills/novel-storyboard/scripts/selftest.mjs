@@ -31,8 +31,11 @@ import {
   renderHtml,
   renderMarkdown,
   SEEDANCE_IDENTITY_LOCK,
+  SEEDANCE_INNER_STATE,
   SEEDANCE_NO_SUBTITLES,
   SEEDANCE_NO_TWINS,
+  SEEDANCE_PACING,
+  pacingWarnings,
   seedancePrompt,
   seedFromScript,
   segSeconds,
@@ -600,8 +603,22 @@ eq(GATE_LOG, '.gates.jsonl', '日志文件名固定');
   ok(e06.prompt.includes('稳定性：稳定'), '稳定性枚举转中文');
   ok(e06.prompt.includes(`<${segOf('E01-06').soundscape}>`), '段级声景套 <>');
   ok(!/^（/m.test(e06.prompt), '没有配乐就没有配乐行');
-  ok(e06.prompt.endsWith(`【约束】\n1. ${SEEDANCE_NO_SUBTITLES}\n2. ${SEEDANCE_NO_TWINS}`), '约束编号：无字幕；多人同框加禁双胞胎');
+  ok(e06.prompt.endsWith(`【约束】\n1. ${SEEDANCE_NO_SUBTITLES}\n2. ${SEEDANCE_NO_TWINS}\n3. ${SEEDANCE_PACING}\n4. ${SEEDANCE_INNER_STATE}`), '约束编号：无字幕；多人同框禁双胞胎；多切加节奏；表演口径');
   ok(!/视觉风格|画风|cinematic/i.test(e06.prompt), '不写画风——视觉风格由调用方附加');
+
+  // 表演层：剧本的 delivery 与切级的 performance / hold 必须有出口
+  {
+    const seg = clone(segOf('E01-10'));
+    seg.cuts[0].performance = '呼吸很浅，喉结动了一下';
+    seg.cuts[0].hold = '说完停一拍，眼神不收回';
+    const p = seedancePrompt(seg, { scene: sceneOf(seg), names }).prompt;
+    ok(p.includes('表演：呼吸很浅，喉结动了一下'), '切级 performance 进「表演」行');
+    ok(p.includes('停顿：说完停一拍，眼神不收回'), 'hold 进「停顿」行');
+    const c2 = clone(segOf('E01-10'));
+    delete c2.cuts[0].performance;
+    c2.cuts[0].beats = c2.cuts[0].beats ?? [1, 1];
+    ok(!/表演：/.test(seedancePrompt({ ...c2, cuts: [{ ...c2.cuts[0], beats: [] }] }, { names }).prompt), '既无 performance 又无 delivery 时不出空「表演」行');
+  }
 
   // 画外音：{} 外面标「以画外音说」
   ok(build('E01-10').prompt.includes('台词：以画外音说{谁都别碰它。到了县城，它就是我全部的话。}'), '画外音按官方写法标在 {} 外');
@@ -610,7 +627,11 @@ eq(GATE_LOG, '.gates.jsonl', '日志文件名固定');
   // 单人段不加禁双胞胎；调用方约束排在前面、不重复
   {
     const e10 = build('E01-10', { constraints: ['画面比例 16:9', SEEDANCE_NO_SUBTITLES] });
-    ok(e10.prompt.endsWith(`【约束】\n1. 画面比例 16:9\n2. ${SEEDANCE_NO_SUBTITLES}`), '调用方约束在前、默认约束不重复、单人段不加禁双胞胎');
+    // 多切段才加节奏约束，表演口径两档都有
+    const tail10 = segOf('E01-10').cuts.length >= 2
+      ? `2. ${SEEDANCE_NO_SUBTITLES}\n3. ${SEEDANCE_PACING}\n4. ${SEEDANCE_INNER_STATE}`
+      : `2. ${SEEDANCE_NO_SUBTITLES}\n3. ${SEEDANCE_INNER_STATE}`;
+    ok(e10.prompt.endsWith(`【约束】\n1. 画面比例 16:9\n${tail10}`), '调用方约束在前、默认约束不重复、单人段不加禁双胞胎');
   }
   // 光影：镜级有才出；镜级没写就继承场次光照——美术层的设定要一路带到视频提示词
   ok(build('E01-10').prompt.includes('光影：远处一点暖黄灯光熄灭后只剩铜扣的冷光'), '镜级光影有才出');
@@ -942,5 +963,22 @@ ok(html.includes('老周'), 'html 里 ID 换成名字');
   const doc = withRecipe();
   ok(renderMarkdown(doc, CTX).includes('| ots-shot-reverse |'), '不挂卡库时配方列退回裸 id');
   ok(renderMarkdown(FIXTURE, CTX).includes('| — |'), '没引用配方的切在配方列写 —');
+}
+// 节奏告警：动作过密 / 语速 / 整段偏赶 / 缺停顿镜——只提示不设门，成片「赶」就靠这四条抓
+{
+  const w = pacingWarnings(FIXTURE, SCRIPT);
+  ok(w.length > 0, '样例数据能算出节奏告警');
+  ok(w.some((x) => x.includes('动作过密')), '动作过密能被识别');
+  ok(w.some((x) => x.includes('没有停顿镜')), '缺停顿镜能被识别');
+  ok(w.every((x) => !x.includes('undefined') && !x.includes('NaN')), '告警文案不带 undefined / NaN');
+  const fixed = clone(FIXTURE);
+  fixed.episodes[0].segments[0].cuts[1].hold = '说完停一拍';
+  const id0 = fixed.episodes[0].segments[0].id;
+  ok(!pacingWarnings(fixed, SCRIPT).some((x) => x.startsWith(`${id0} 没有停顿镜`)), '补了 hold 就撤掉该段的缺停顿告警');
+  // 语速：故意给 4 秒切塞 20 音节确实触发；同样台词放进 8 秒切就不该再报
+  const slow = clone(FIXTURE);
+  const seg = slow.episodes[0].segments.find((s) => s.cuts.some((c) => (c.beats ?? []).length < 3)) ?? slow.episodes[0].segments[0];
+  seg.cuts[0].seconds = 8;
+  ok(!pacingWarnings({ episodes: [{ ep: 1, segments: [seg] }] }, SCRIPT).some((x) => x.includes('语速偏快')), '切拉长后不再报语速偏快');
 }
 console.log(`✓ ${passed} 项自测全部通过`);

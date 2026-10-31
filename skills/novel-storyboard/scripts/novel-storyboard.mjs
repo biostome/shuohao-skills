@@ -199,6 +199,10 @@ export const SEEDANCE_NO_SUBTITLES = '保持无字幕，避免生成任何文字
 export const SEEDANCE_NO_TWINS = '视频全程禁止出现外形、着装、配饰完全一致的人物';
 // 分镜图成为视频参考后，身份连续性靠图钉死——这条约束只在真的挂了参考图时才有意义
 export const SEEDANCE_IDENTITY_LOCK = '同一角色的长相、发型与服装在所有镜头中保持一致，以参考图为准，不得中途变化';
+// 多切一次生成时，模型习惯把动作连打成快放——必须显式要留白，不然成片就是“赶”
+export const SEEDANCE_PACING = '每个镜头起手先静止一拍再入动作，动作做完留一拍静止再切镜；不加速、不甩镜、不把两个以上动作挤在同一拍里';
+// 心境不靠台词，靠「不做什么」：给他一个多余的小动作和一处不看镜头的地方
+export const SEEDANCE_INNER_STATE = '人物情绪通过眼神落点、呼吸起伏和一句台词后的停顿表现出来，不做饱满表演、不做表情管理';
 
 /**
  * 附件两条路：这一段每切都有分镜图 → 分镜路径，只挂分镜图；否则 → 参考图路径，
@@ -261,6 +265,11 @@ export function seedancePrompt(seg, { scene = null, names = {}, image = null, co
       : [];
     // 台词逐字进 {}；身份与语气由镜头正文交代，画外音按官方写法标在 {} 外面
     out.push(`台词：${spoken.length ? spoken.map((b) => `${b.speaker === 'VO' ? '以画外音说' : ''}{${b.text}}`).join(' ') : '{}'}`);
+    // 表演：切级 performance 优先，没写就用剧本 delivery——剧本里写的语气/眼神不能停在 json 里
+    const perf = String(cut?.performance ?? '').trim()
+      || spoken.map((b) => String(b.delivery ?? '').trim()).filter(Boolean).join('；');
+    if (perf) out.push(`表演：${perf}`);
+    line('停顿', cut?.hold);
     line('视线落点', cut?.eyeline);
     line('焦点', cut?.focus);
     line('稳定性', STABILITY[cut?.stability] ?? cut?.stability);
@@ -281,6 +290,9 @@ export function seedancePrompt(seg, { scene = null, names = {}, image = null, co
   if (crowded && !rules.includes(SEEDANCE_NO_TWINS)) rules.push(SEEDANCE_NO_TWINS);
   // 挂了分镜图参考才追加身份锁——没有参考图时这句话无从执行，反而稀释约束
   if (frames.some(Boolean) && !rules.includes(SEEDANCE_IDENTITY_LOCK)) rules.push(SEEDANCE_IDENTITY_LOCK);
+  // 多切一次生成：模型会把动作连打成快放，节奏与留白必须写进约束
+  if (cuts.length >= 2 && !rules.includes(SEEDANCE_PACING)) rules.push(SEEDANCE_PACING);
+  if (!rules.includes(SEEDANCE_INNER_STATE)) rules.push(SEEDANCE_INNER_STATE);
   out.push('【约束】', ...rules.map((r, i) => `${i + 1}. ${r}`));
   return { prompt: out.join('\n'), refs };
 }
@@ -392,6 +404,60 @@ export function recipeDrift(cut, card) {
     sizes: sizes.length && !sizes.includes(cut?.size) ? sizes : [],
     cameras: cameras.length && !cameras.includes(cut?.camera) ? cameras : [],
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* 节奏告警                                                             */
+/* ------------------------------------------------------------------ */
+/*
+ * 「画面仓促」不是提示词问题，是配时问题——一次生成里塞的动作数 ÷ 秒数。
+ * 这里只算三件可以客观量的事，**只提示不设门**（同 recipeDrift 的理由）：
+ *   动作密度：≤2.5 秒的切里出现 ≥3 个动作分句，演员只能在动作之间滑过去
+ *   语速：音节 ÷ 秒 > 4.3，中文对白的上限，超了就像在念稿
+ *   留白：整段平均切长 < 2.8 秒，或者 4 切以上没有一处 hold（人不动）
+ * 数字取的是短剧实拍经验值，不是标准答案；调的是「哪一刀该拆」。
+ */
+const spokenSyllables = (text) => (String(text ?? '').match(/[\u4e00-\u9fa5]|[0-9]/g) ?? []).length;
+
+export function pacingWarnings(board, script) {
+  const out = [];
+  const expanded = expandScript(script);
+  for (const ep of board?.episodes ?? []) {
+    const sEp = expanded.get(ep.ep);
+    for (const seg of ep?.segments ?? []) {
+      const cuts = seg?.cuts ?? [];
+      if (!cuts.length) continue;
+      const scene = sEp?.scenes?.[seg.sceneIndex - 1];
+      cuts.forEach((cut, ci) => {
+        const moves = String(cut?.shot ?? '').split(/[，,]/).map((s) => s.trim()).filter(Boolean).length;
+        if (cut.seconds <= 2.5 && moves >= 3) {
+          out.push(`${seg.id}#${ci + 1} 动作过密：${cut.seconds}s 里 ${moves} 个动作，留一个给下一镜`);
+        }
+        const [from, to] = cut?.beats ?? [];
+        const lines = scene && Number.isInteger(from) && Number.isInteger(to)
+          ? scene.beats.slice(from - 1, to).filter((b) => b.kind === 'line')
+          : [];
+        const syl = lines.reduce((n, b) => n + spokenSyllables(b.text), 0);
+        const rate = syl / cut.seconds;
+        if (syl && rate > 4.3) {
+          out.push(`${seg.id}#${ci + 1} 语速偏快：${syl} 音节 / ${cut.seconds}s = ${rate.toFixed(1)} 音节/秒（上限 4.3），延长这一切或把台词拆到下一镜`);
+        }
+      });
+      const avg = segSeconds(seg) / cuts.length;
+      if (cuts.length >= 3 && avg < 2.8) {
+        out.push(`${seg.id} 整段偏赶：${cuts.length} 切平均 ${avg.toFixed(1)}s，低于 2.8s 就没有留白`);
+      }
+      if (cuts.length >= 4 && !cuts.some((c) => String(c?.hold ?? '').trim())) {
+        out.push(`${seg.id} 没有停顿镜：${cuts.length} 切全在动作里，加一处 hold（人不动，只有呼吸或眼神）`);
+      }
+      // 视频提示词里没有表演层，成片就只剩动作——心境只能靠演员的脸和停顿，不靠台词
+      const h3 = String(seg?.h3Prompt ?? '');
+      if (h3 && !/表演|神情|语气|眼神|呼吸|停顿|盯|绷|咽|低声|压低/.test(h3)) {
+        out.push(`${seg.id} 视频提示词没有表演层：补语气／眼神落点／一处停顿，否则成片只有动作没有心境`);
+      }
+    }
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1073,6 +1139,7 @@ const I18N = {
     seedancePrompt: 'Seedance 提示词',
     seedanceSection: 'Seedance 视频提示词',
     blockingLabel: '走位',
+    pacingHint: (n) => `\n⚠️ 节奏告警 ${n} 处（不阻塞，但成片会显赶）：`,
     segVideo: '成片预览',
     videoSeekHint: '点切点时间戳，成片跳到该处',
     compLine: (c) => [c.lens, c.cameraPosition, c.composition, c.eyeline && `视线 ${c.eyeline}`, c.focus && `焦点 ${c.focus}`, STABILITY[c.stability] ?? c.stability].filter(Boolean).join(' · '),
@@ -1142,6 +1209,7 @@ const I18N = {
     seedancePrompt: 'Seedance prompt',
     seedanceSection: 'Seedance video prompt',
     blockingLabel: 'Blocking',
+    pacingHint: (n) => `\n⚠️ ${n} pacing warnings (non-blocking; they show up as rushed cuts):`,
     segVideo: 'Rendered cut',
     videoSeekHint: 'click a cut timestamp to seek the video',
     compLine: (c) => [c.lens, c.cameraPosition, c.composition, c.eyeline && `eyeline ${c.eyeline}`, c.focus && `focus ${c.focus}`, ({ stable: 'stable', 'slight-shake': 'slight shake', handheld: 'handheld' })[c.stability] ?? c.stability].filter(Boolean).join(' · '),
@@ -2077,6 +2145,9 @@ function main(argv) {
         }
         if (drifted.length) console.error(`\n${I18N.zh.recipeHint(drifted.length)}\n${drifted.join('\n')}`);
       }
+      // 节奏告警：配时问题靠数算，不靠眼力——只提示不设门，跟配方偏离同一档
+      const pacing = pacingWarnings(board, ctx.script);
+      if (pacing.length) console.error(`${I18N.zh.pacingHint(pacing.length)}\n${pacing.map((x) => '  ' + x).join('\n')}`);
       if (failedN) process.exit(1);
       return;
     }
